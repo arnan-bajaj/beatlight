@@ -4,7 +4,8 @@ Pulse a MacBook's keyboard backlight and trackpad haptics to whatever audio is p
 
 - **Backlight** follows the bass envelope (150 Hz low-pass, 10 ms RMS frames, auto-gain over ~4 s), updated at most 30×/s.
 - **Haptics** fire one short trackpad tap per detected beat (bass energy > 1.6× its ~1 s running average), rate-capped at 4/s by default and 8/s hard.
-- **Audio source** is system audio via ScreenCaptureKit, or the microphone with `--mic`.
+- **Audio source** is system audio via ScreenCaptureKit, or the microphone.
+- Runs as a **menu bar app** (`Beatlight.app`) or a **command-line tool** (`beatlight`). Both share the same engine.
 
 > Uses two private Apple frameworks (CoreBrightness for the backlight, MultitouchSupport for the trackpad actuator), loaded at runtime. Personal use only; a macOS update can break it. The keyboard backlight is a single zone, so there is no per-key or wave effect.
 
@@ -47,22 +48,53 @@ cd ~/Downloads/beatlight-main
 bash build.sh
 ```
 
-This compiles `beatlight.m` into a program called `beatlight` in the same folder. It should end with `Built ./beatlight`. Compiler warnings are fine; errors mean it didn't build.
+This builds two things in the same folder: `Beatlight.app` (the menu bar app) and `beatlight` (the command-line tool). It should end with `Built ./Beatlight.app`. Compiler warnings are fine; errors mean it didn't build.
 
-### 4. Allow audio capture (one time)
+### 4. Run the menu bar app
 
-beatlight listens to your Mac's system audio, which macOS treats as screen recording.
+```sh
+open Beatlight.app
+```
+
+A waveform icon appears in the menu bar and it starts right away. The icon is greyed out while it's stopped.
+
+**First launch:** beatlight listens to your Mac's system audio, which macOS treats as screen recording, so it asks for permission.
+
+1. Click **Open System Settings** in Beatlight's prompt (or go to **System Settings → Privacy & Security → Screen & System Audio Recording**; called **Screen Recording** on macOS 13–14).
+2. Turn on **Beatlight**.
+3. Click the menu bar icon → **Quit Beatlight**, then `open Beatlight.app` again. The permission doesn't apply until it restarts.
+
+Don't want to grant that? Choose **Audio Source → Microphone** in the menu instead. It asks for microphone access, and the mic picks up your speakers, so play music out loud, not through headphones.
+
+**The menu:**
+
+| Item | What it does |
+|---|---|
+| Start / Stop | Stopping restores your backlight level and auto-brightness |
+| Audio Source | System Audio or Microphone |
+| Beat Sensitivity | Low / Medium / High (high = more beats) |
+| Keyboard Backlight | Pulse the backlight with the bass |
+| Arp Flicker | Flicker the backlight on synth/arpeggio notes ([details](#arp-mode)) |
+| Arp Sensitivity | Low / Medium / High (high = more flickers) |
+| Trackpad Haptics | Tap the trackpad on kicks (max 4 taps/s) |
+| Haptic Strength | Weak / Medium / Strong |
+| Launch at Login | Start Beatlight when you log in |
+
+Settings are remembered. If it was running when you quit, it starts again on the next launch. It pauses while the Mac sleeps and resumes on wake. Quitting always restores the backlight.
+
+To keep it around, move `Beatlight.app` into your Applications folder; Spotlight will find it there.
+
+**After rebuilding:** the app is signed locally, so macOS may treat each new build as a different app and ask for permission again. If it keeps saying it needs permission, select Beatlight in Screen & System Audio Recording, remove it with **−**, then quit and reopen Beatlight and allow it again.
+
+### 5. Or use the command line
+
+The command-line tool needs the same permission, but for your terminal app instead of Beatlight:
 
 1. Run `./beatlight -v` once. macOS shows a permission prompt and beatlight exits with a permission message.
-2. Open **System Settings → Privacy & Security → Screen & System Audio Recording** (called **Screen Recording** on macOS 13–14) and turn on **Terminal** (or iTerm, whichever you use).
-3. **Quit Terminal completely (Cmd+Q)** and reopen it. The permission doesn't apply until you do.
-4. `cd` back into the beatlight folder.
+2. In **System Settings → Privacy & Security → Screen & System Audio Recording**, turn on **Terminal** (or iTerm, whichever you use).
+3. **Quit Terminal completely (Cmd+Q)** and reopen it, then `cd` back into the beatlight folder.
 
-This permission applies to everything you run from that terminal app, not just beatlight. You can turn it off again in the same place when you're done.
-
-To skip this step, use the microphone instead: `./beatlight --mic -v`. macOS asks for microphone access the first time; click Allow. The mic picks up your speakers, so play music out loud, not through headphones.
-
-### 5. Run
+This permission applies to everything you run from that terminal app, not just beatlight. To skip it, use `./beatlight --mic -v`.
 
 Play some music, then:
 
@@ -79,12 +111,14 @@ Play some music, then:
 | Message | Fix |
 |---|---|
 | `xcrun: error: invalid active developer path` | Command Line Tools aren't installed: redo step 1 |
-| `no permission to capture system audio` | Redo step 4, including quitting and reopening Terminal |
-| `keyboard backlight not reachable` | Your Mac's backlight isn't supported; haptics still work |
-| `trackpad actuator not reachable` | No Force Touch trackpad found; backlight still works |
+| App: "needs permission to hear your Mac's audio" | Step 4: turn on Beatlight, then quit and reopen it. Still stuck after a rebuild? Remove it with **−** and allow it again |
+| App: "Keyboard Backlight (not available)" in the menu | Your Mac's backlight isn't supported; haptics still work |
+| CLI: `no permission to capture system audio` | Step 5: turn on your terminal app, then quit and reopen it |
+| CLI: `keyboard backlight not reachable` | Your Mac's backlight isn't supported; haptics still work |
+| CLI: `trackpad actuator not reachable` | No Force Touch trackpad found; backlight still works |
 | Meter stays empty | Nothing is playing, or (with `--mic`) the music is in headphones |
 
-## Options
+## Command-line options
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -102,7 +136,7 @@ Play some music, then:
 
 ### Arp mode
 
-For songs driven by synth arpeggios (think The Weeknd), `--arp` runs a 1024-point FFT every 10 ms and watches *spectral flux* between 250 Hz and 4 kHz: how much new energy shows up in new frequency bins. A new synth note moves energy into different bins even when the loudness stays flat, so it catches notes a plain volume detector misses.
+For songs driven by synth arpeggios (think The Weeknd), arp mode (**Arp Flicker** in the app, `--arp` on the command line) runs a 1024-point FFT every 10 ms and watches *spectral flux* between 250 Hz and 4 kHz: how much new energy shows up in new frequency bins. A new synth note moves energy into different bins even when the loudness stays flat, so it catches notes a plain volume detector misses.
 
 Each detected note flickers the backlight: a flash when the keyboard is dim, a dip when it's bright, fading back over about 50 ms. Kicks still drive the main pulse, and the trackpad still taps on kicks only. Flickers are capped at about 12 per second, and any note within 40 ms of a kick is ignored (a kick's attack also hits the mids).
 
@@ -118,4 +152,4 @@ The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an
 
 ## Status
 
-Builds on macOS with the Command Line Tools. Runtime behavior is not yet fully verified; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
+The command-line tool builds on macOS with the Command Line Tools. The menu bar app is new and not yet verified on hardware; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
