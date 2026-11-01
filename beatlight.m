@@ -3,6 +3,9 @@
 // Audio:     system audio via ScreenCaptureKit (default) or the microphone (--mic).
 // Analysis:  150 Hz low-pass -> 10 ms RMS frames -> envelope for brightness,
 //            onset detection (energy jump over a ~1 s running average) for beats.
+//            --arp adds a 1024-point FFT every frame: spectral flux in 250 Hz-4 kHz
+//            catches note changes (synth arpeggios) and flickers the keyboard backlight.
+//            The trackpad only ever taps on kicks.
 // Hardware:  keyboard backlight via private CoreBrightness (KeyboardBrightnessClient),
 //            trackpad actuator via private MultitouchSupport (MTActuatorActuate).
 //            Both are dlopen'd at runtime, so this builds with the stock Command Line Tools.
@@ -11,6 +14,7 @@
 // Build: ./build.sh     Run: ./beatlight --help
 
 #import <Foundation/Foundation.h>
+#import <Accelerate/Accelerate.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
@@ -25,15 +29,23 @@
 #pragma mark - Options
 
 static struct {
-    BOOL useMic, backlight, haptics, verbose;
+    BOOL useMic, backlight, haptics, verbose, arp;
     float minB, maxB;    // backlight range, 0..1
     double sens;         // beat threshold: multiple of the running bass average
     double hapticRate;   // max haptic pulses per second
     int hapticID;        // MTActuatorActuate actuation ID (3 weak, 4 medium, 6 strong)
-} opt = { NO, YES, YES, NO, 0.05f, 1.0f, 1.6, 4.0, 4 };
+    double arpSens;      // arp threshold: multiple of the running spectral-flux average
+    float arpDepth;      // how far a backlight flicker swings toward the opposite brightness, 0..1
+} opt = { .backlight = YES, .haptics = YES, .minB = 0.05f, .maxB = 1.0f, .sens = 1.6,
+          .hapticRate = 4.0, .hapticID = 4, .arpSens = 1.5, .arpDepth = 0.8f };
 
 static const double kHapticRateCap = 8.0;   // hard ceiling, regardless of flags
-static const double kSilence = 3e-4;        // RMS below this counts as silence
+
+static const double kSilence = 3e-4;        // bass RMS below this counts as silence
+static const double kRawGate = 1e-3;        // full-band RMS below this: no arp detection
+static const double kFluxFloor = 0.5;       // ignore spectral-flux peaks smaller than this
+static const uint64_t kMinFlickGapNs = 83000000ull;   // backlight flickers: at most ~12/s
+static const uint64_t kKickMaskNs = 40000000ull;      // ignore arp onsets within 40 ms of a kick
 
 static uint64_t nowNs(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 
@@ -177,19 +189,40 @@ static inline double biquadRun(Biquad *q, double x) {   // transposed direct for
     return y;
 }
 
+#define kFFTN 1024                       // ~21 ms window at 48 kHz, ~47 Hz per bin
+
+static vDSP_DFT_Setup gDFT;
+static float gWin[kFFTN];                // Hann window
+
 static struct {
     double sr, hopSec;
     int hop, n;
-    double acc, avg, env, peak;
+    long frames;
+    double acc, rawAcc, avg, env, peak;
     double kAvg, kAtk, kRel, peakDecay;
     BOOL armed;
-    uint64_t lastPulse, lastOnset, lastKB, lastMeter;
+    uint64_t lastPulse, lastOnset, lastArpOnset, lastKB, lastMeter;
     float lastB;
     Biquad lp;
+    // arp detection
+    float ring[kFFTN];                   // last kFFTN raw samples; ringPos = oldest
+    int ringPos;
+    float mPrev[kFFTN / 2];              // previous frame's log magnitudes
+    int kLo, kHi;                        // FFT bins covering 250 Hz - 4 kHz
+    double fluxAvg, flux1, flux2, kFlux;
+    // backlight flicker
+    double flick, flickDecay;            // flicker envelope: 1 on an arp note, decays in ~50 ms
+    uint64_t lastFlick;
 } A;
 
 static void analyzerSetup(double sr) {
+    if (!gDFT) {
+        gDFT = vDSP_DFT_zrop_CreateSetup(NULL, kFFTN, vDSP_DFT_FORWARD);
+        for (int i = 0; i < kFFTN; i++) gWin[i] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * i / kFFTN);
+    }
     memset(&A, 0, sizeof A);
+    A.kLo = (int)fmax(1.0, ceil(250.0 * kFFTN / sr));
+    A.kHi = (int)fmin(kFFTN / 2 - 1, floor(4000.0 * kFFTN / sr));
     A.sr = sr;
     A.hop = (int)lround(sr * 0.010);            // 10 ms frames
     A.hopSec = A.hop / sr;
@@ -197,14 +230,39 @@ static void analyzerSetup(double sr) {
     A.kAtk = 1.0 - exp(-A.hopSec / 0.010);      // 10 ms attack
     A.kRel = 1.0 - exp(-A.hopSec / 0.180);      // 180 ms release
     A.peakDecay = exp(-A.hopSec / 4.0);         // auto-gain forgets over ~4 s
+    A.kFlux = 1.0 - exp(-A.hopSec / 0.5);       // ~0.5 s running average of spectral flux
+    A.flickDecay = exp(-A.hopSec / 0.050);      // flicker fades with a 50 ms time constant
     A.peak = kSilence;
     A.armed = YES;
     A.lastB = -1.0f;
     biquadLowpass(&A.lp, 150.0, sr);
 }
 
-static void onFrame(double e) {
+// Spectral flux over 250 Hz - 4 kHz: how much the spectrum *rose* since the last frame.
+// A new synth note moves energy into new bins even at constant loudness, so this catches
+// arpeggios that a plain energy detector misses. Log magnitudes make it level-independent.
+static double spectralFlux(void) {
+    static float inRe[kFFTN / 2], inIm[kFFTN / 2], outRe[kFFTN / 2], outIm[kFFTN / 2];
+    for (int i = 0; i < kFFTN / 2; i++) {   // oldest sample first, windowed, even/odd split for zrop
+        int a = (A.ringPos + 2 * i) & (kFFTN - 1);
+        int b = (A.ringPos + 2 * i + 1) & (kFFTN - 1);
+        inRe[i] = A.ring[a] * gWin[2 * i];
+        inIm[i] = A.ring[b] * gWin[2 * i + 1];
+    }
+    vDSP_DFT_Execute(gDFT, inRe, inIm, outRe, outIm);
+    double flux = 0.0;
+    for (int k = A.kLo; k <= A.kHi; k++) {
+        float m = log1pf(hypotf(outRe[k], outIm[k]));
+        float d = m - A.mPrev[k];
+        if (d > 0.0f) flux += d;
+        A.mPrev[k] = m;
+    }
+    return flux;
+}
+
+static void onFrame(double e, double raw) {
     uint64_t t = nowNs();
+    A.frames++;
 
     // Beat = bass energy jumps well above its recent average. Re-arm once it falls back.
     BOOL onset = NO;
@@ -212,12 +270,29 @@ static void onFrame(double e) {
     else if (e < A.avg * 1.1) A.armed = YES;
     A.avg += (e - A.avg) * A.kAvg;
 
+    // Arp note = a local peak in spectral flux well above its recent average.
+    // Peak-picking looks one frame back, so it lags by 10 ms.
+    BOOL arpOnset = NO;
+    if (opt.arp && gKBReady && opt.backlight && gDFT) {
+        double f = spectralFlux();
+        if (A.frames > 50 &&                                  // let averages settle (~0.5 s)
+            A.flux1 > A.flux2 && A.flux1 >= f &&
+            A.flux1 > A.fluxAvg * opt.arpSens && A.flux1 > kFluxFloor && raw > kRawGate) {
+            arpOnset = YES;
+            A.lastArpOnset = t;
+        }
+        A.fluxAvg += (f - A.fluxAvg) * A.kFlux;
+        A.flux2 = A.flux1;
+        A.flux1 = f;
+    }
+
     // Brightness = bass envelope normalized by a slowly decaying peak (auto-gain).
     A.env += (e - A.env) * (e > A.env ? A.kAtk : A.kRel);
     A.peak = fmax(fmax(A.env, A.peak * A.peakDecay), kSilence);
     double level = fmin(A.env / A.peak, 1.0);
     level *= level;                              // more contrast between hits and gaps
 
+    // Haptics: kicks only, rate-limited.
     if (onset && gAct && opt.haptics) {
         uint64_t minGapNs = (uint64_t)(1e9 / fmin(opt.hapticRate, kHapticRateCap));
         if (t - A.lastPulse >= minGapNs) {
@@ -226,8 +301,26 @@ static void onFrame(double e) {
         }
     }
 
-    if (gKBReady && opt.backlight && t - A.lastKB >= 33000000ull) {   // <= ~30 updates/s
-        float b = opt.minB + (opt.maxB - opt.minB) * (float)level;
+    // Backlight flicker: each arp note briefly swings the brightness toward the opposite
+    // extreme (a flash when the keyboard is dim, a dip when it's bright), then it fades back.
+    // A kick's attack also lights up the mids, so arps within 40 ms of a kick are ignored.
+    BOOL flickNow = NO;
+    if (arpOnset && t - A.lastOnset > kKickMaskNs &&
+        t - A.lastFlick >= kMinFlickGapNs) {
+        A.flick = 1.0;
+        A.lastFlick = t;
+        flickNow = YES;
+    }
+    double shown = level;
+    if (A.flick > 0.02) {
+        double target = level > 0.5 ? 0.0 : 1.0;
+        shown = level + (target - level) * A.flick * opt.arpDepth;
+    }
+    A.flick *= A.flickDecay;
+
+    // <= ~30 updates/s, plus an immediate update on each flicker so it isn't delayed.
+    if (gKBReady && opt.backlight && (flickNow || t - A.lastKB >= 33000000ull)) {
+        float b = opt.minB + (opt.maxB - opt.minB) * (float)shown;
         if (fabsf(b - A.lastB) >= 0.01f) {
             A.lastB = b;
             A.lastKB = t;
@@ -237,23 +330,29 @@ static void onFrame(double e) {
 
     if (opt.verbose && t - A.lastMeter >= 80000000ull) {
         A.lastMeter = t;
-        int bars = (int)lround(level * 30.0);
+        int bars = (int)lround(shown * 30.0);
         if (bars < 0) bars = 0;
         if (bars > 30) bars = 30;
         char meter[31];
         memset(meter, '#', (size_t)bars);
         memset(meter + bars, ' ', (size_t)(30 - bars));
         meter[30] = '\0';
-        fprintf(stderr, "\r[%s] %s", meter, (t - A.lastOnset < 150000000ull) ? "BEAT" : "    ");
+        fprintf(stderr, "\r[%s] %s %s", meter,
+                (t - A.lastOnset < 150000000ull) ? "BEAT" : "    ",
+                (opt.arp && t - A.lastArpOnset < 100000000ull) ? "ARP" : "   ");
     }
 }
 
 static inline void feedSample(double x) {
+    A.ring[A.ringPos] = (float)x;
+    A.ringPos = (A.ringPos + 1) & (kFFTN - 1);
+    A.rawAcc += x * x;
     double y = biquadRun(&A.lp, x);
     A.acc += y * y;
     if (++A.n >= A.hop) {
-        onFrame(sqrt(A.acc / A.n));
+        onFrame(sqrt(A.acc / A.n), sqrt(A.rawAcc / A.n));
         A.acc = 0.0;
+        A.rawAcc = 0.0;
         A.n = 0;
     }
 }
@@ -401,6 +500,9 @@ static void usage(void) {
         "  --sens X           beat threshold vs. running average, >1 (default 1.6; lower = more beats)\n"
         "  --haptic-rate N    max haptic pulses per second (default 4, hard cap 8)\n"
         "  --haptic-id N      actuation pattern: 3 weak, 4 medium, 6 strong (default 4)\n"
+        "  --arp              flicker the keyboard backlight on synth/arpeggio notes (250 Hz-4 kHz)\n"
+        "  --arp-sens X       arp threshold vs. running average, >1 (default 1.5; lower = more flickers)\n"
+        "  --arp-depth X      backlight flicker strength, 0-1 (default 0.8)\n"
         "  -v, --verbose      show a live level meter\n");
 }
 
@@ -424,6 +526,9 @@ static void parseArgs(int argc, const char *argv[]) {
         else if (!strcmp(a, "--sens"))          opt.sens = argNum(argc, argv, &i);
         else if (!strcmp(a, "--haptic-rate"))   opt.hapticRate = argNum(argc, argv, &i);
         else if (!strcmp(a, "--haptic-id"))     opt.hapticID = (int)argNum(argc, argv, &i);
+        else if (!strcmp(a, "--arp"))           opt.arp = YES;
+        else if (!strcmp(a, "--arp-sens"))      opt.arpSens = argNum(argc, argv, &i);
+        else if (!strcmp(a, "--arp-depth"))     opt.arpDepth = (float)argNum(argc, argv, &i);
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) opt.verbose = YES;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); exit(0); }
         else { fprintf(stderr, "beatlight: unknown option %s\n", a); usage(); exit(2); }
@@ -432,6 +537,9 @@ static void parseArgs(int argc, const char *argv[]) {
     opt.maxB = fminf(fmaxf(opt.maxB, 0.0f), 1.0f);
     if (opt.minB > opt.maxB) { float t = opt.minB; opt.minB = opt.maxB; opt.maxB = t; }
     if (opt.sens <= 1.0) opt.sens = 1.05;
+    if (opt.arpSens <= 1.0) opt.arpSens = 1.05;
+    opt.arpDepth = fminf(fmaxf(opt.arpDepth, 0.0f), 1.0f);
+    if (opt.arp && !opt.backlight) fprintf(stderr, "beatlight: --arp needs the backlight; ignoring it.\n");
     if (opt.hapticRate <= 0.0) opt.haptics = NO;
     if (opt.hapticRate > kHapticRateCap) {
         fprintf(stderr, "beatlight: haptic rate capped at %.0f/s\n", kHapticRateCap);

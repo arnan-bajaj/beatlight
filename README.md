@@ -95,7 +95,22 @@ Play some music, then:
 | `--sens X` | 1.6 | Beat threshold vs. running average; lower = more beats |
 | `--haptic-rate N` | 4 | Max haptic taps per second (hard cap 8) |
 | `--haptic-id N` | 4 | Tap pattern: 3 weak, 4 medium, 6 strong |
+| `--arp` | off | Flicker the keyboard backlight on synth/arpeggio notes |
+| `--arp-sens X` | 1.5 | Arp threshold; lower = more flickers |
+| `--arp-depth X` | 0.8 | Backlight flicker strength, 0–1 |
 | `-v`, `--verbose` | off | Live level meter |
+
+### Arp mode
+
+For songs driven by synth arpeggios (think The Weeknd), `--arp` runs a 1024-point FFT every 10 ms and watches *spectral flux* between 250 Hz and 4 kHz: how much new energy shows up in new frequency bins. A new synth note moves energy into different bins even when the loudness stays flat, so it catches notes a plain volume detector misses.
+
+Each detected note flickers the backlight: a flash when the keyboard is dim, a dip when it's bright, fading back over about 50 ms. Kicks still drive the main pulse, and the trackpad still taps on kicks only. Flickers are capped at about 12 per second, and any note within 40 ms of a kick is ignored (a kick's attack also hits the mids).
+
+```sh
+./beatlight -v --arp
+```
+
+Vocals, snares and claps also produce spectral flux, so busy tracks can flicker on more than just the synth. Raise `--arp-sens` (try 2.0) if it's too twitchy, lower it (try 1.3) if it misses notes. If flashing lights bother you, skip `--arp` or lower `--arp-depth`.
 
 ## Hardware safety
 
