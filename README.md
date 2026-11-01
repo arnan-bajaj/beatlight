@@ -44,4 +44,4 @@ The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an
 
 ## Status
 
-Not yet verified on hardware. The `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
+Builds on macOS with the Command Line Tools. Runtime behavior is not yet fully verified; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
