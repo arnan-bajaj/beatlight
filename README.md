@@ -12,18 +12,77 @@ Pulse a MacBook's keyboard backlight and trackpad haptics to whatever audio is p
 
 - MacBook with a backlit keyboard and a Force Touch trackpad (2015+)
 - macOS 13 or later
-- Apple Command Line Tools: `xcode-select --install`
+- Apple's Command Line Tools (free; step 1 below). Full Xcode is not needed.
 
 ## Build and run
 
+All commands go in **Terminal** (Applications → Utilities → Terminal, or Cmd+Space and type "Terminal").
+
+### 1. Install Apple's Command Line Tools (one time)
+
 ```sh
-./build.sh
+xcode-select --install
+```
+
+A dialog pops up; click **Install** and wait for it to finish (a few minutes, roughly a 1 GB download). If it says the tools are already installed, you're set. To confirm, `clang --version` should print a version instead of an error.
+
+### 2. Download beatlight
+
+Either clone it with git (included in the Command Line Tools):
+
+```sh
+git clone https://github.com/arnan-bajaj/beatlight
+cd beatlight
+```
+
+or, on this page, click **Code → Download ZIP**, double-click the ZIP in Downloads to unzip it, then:
+
+```sh
+cd ~/Downloads/beatlight-main
+```
+
+### 3. Build
+
+```sh
+bash build.sh
+```
+
+This compiles `beatlight.m` into a program called `beatlight` in the same folder. It should end with `Built ./beatlight`. Compiler warnings are fine; errors mean it didn't build.
+
+### 4. Allow audio capture (one time)
+
+beatlight listens to your Mac's system audio, which macOS treats as screen recording.
+
+1. Run `./beatlight -v` once. macOS shows a permission prompt and beatlight exits with a permission message.
+2. Open **System Settings → Privacy & Security → Screen & System Audio Recording** (called **Screen Recording** on macOS 13–14) and turn on **Terminal** (or iTerm, whichever you use).
+3. **Quit Terminal completely (Cmd+Q)** and reopen it. The permission doesn't apply until you do.
+4. `cd` back into the beatlight folder.
+
+This permission applies to everything you run from that terminal app, not just beatlight. You can turn it off again in the same place when you're done.
+
+To skip this step, use the microphone instead: `./beatlight --mic -v`. macOS asks for microphone access the first time; click Allow. The mic picks up your speakers, so play music out loud, not through headphones.
+
+### 5. Run
+
+Play some music, then:
+
+```sh
 ./beatlight -v
 ```
 
-The first run asks for **Screen & System Audio Recording** permission for your terminal app (System Settings → Privacy & Security). Enable it, quit and reopen the terminal, and run again. To skip that, use `./beatlight --mic -v`.
+`-v` shows a live bass meter and flashes `BEAT` on detected beats. The keyboard should pulse and the trackpad should tap on kicks. Try `--haptic-id 3` the first time for the weakest taps, or `--no-haptics` for backlight only.
 
-Ctrl-C stops it and restores the original backlight level and auto-brightness setting.
+**Ctrl+C** stops it and restores your original backlight level and auto-brightness setting. If it ever exits any other way (crash, force-quit), turn auto-brightness back on in System Settings → Keyboard → "Adjust keyboard brightness in low light".
+
+### Troubleshooting
+
+| Message | Fix |
+|---|---|
+| `xcrun: error: invalid active developer path` | Command Line Tools aren't installed: redo step 1 |
+| `no permission to capture system audio` | Redo step 4, including quitting and reopening Terminal |
+| `keyboard backlight not reachable` | Your Mac's backlight isn't supported; haptics still work |
+| `trackpad actuator not reachable` | No Force Touch trackpad found; backlight still works |
+| Meter stays empty | Nothing is playing, or (with `--mic`) the music is in headphones |
 
 ## Options
 
