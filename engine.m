@@ -6,7 +6,6 @@
 //            Arp mode adds a 1024-point FFT every frame: spectral flux in 250 Hz-4 kHz
 //            catches note changes (synth arpeggios) and flickers the keyboard backlight.
 //            The trackpad only ever taps on kicks.
-// RGB:       optional: the same pulse goes to every device OpenRGB controls (orgb.c).
 // Hardware:  keyboard backlight via private CoreBrightness (KeyboardBrightnessClient),
 //            trackpad actuator via private MultitouchSupport (MTActuatorActuate).
 //            Both are dlopen'd at runtime, so this builds with the stock Command Line Tools.
@@ -14,7 +13,6 @@
 // Personal use only. Private APIs: a macOS update can break this at any time.
 
 #import "engine.h"
-#import "orgb.h"
 #import <Accelerate/Accelerate.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -83,8 +81,7 @@ static void optsSet(BLOptions o) {
 BLOptions BLDefaultOptions(void) {
     return (BLOptions){ .useMic = NO, .backlight = YES, .haptics = YES, .arp = NO,
                         .minB = 0.05f, .maxB = 1.0f, .sens = 1.6, .hapticRate = 4.0, .hapticID = 4,
-                        .arpSens = 1.5, .arpDepth = 0.8f,
-                        .rgb = NO, .rgbColor = 0xFFFFFF, .rgbMode = BLRGBSolid };
+                        .arpSens = 1.5, .arpDepth = 0.8f };
 }
 
 BLOptions BLClampOptions(BLOptions o) {
@@ -96,8 +93,6 @@ BLOptions BLClampOptions(BLOptions o) {
     o.arpDepth = fminf(fmaxf(o.arpDepth, 0.0f), 1.0f);
     if (!(o.hapticRate > 0.0)) { o.haptics = NO; o.hapticRate = 4.0; }
     if (o.hapticRate > BL_HAPTIC_RATE_CAP) o.hapticRate = BL_HAPTIC_RATE_CAP;
-    o.rgbColor &= 0xFFFFFFu;
-    if (o.rgbMode < BLRGBSolid || o.rgbMode > BLRGBReactiveRainbow) o.rgbMode = BLRGBSolid;
     return o;
 }
 
@@ -267,10 +262,6 @@ static struct {
     // backlight flicker
     double flick, flickDecay;            // flicker envelope: 1 on an arp note, decays in ~50 ms
     uint64_t lastFlick;
-    // RGB devices
-    double hue;                          // color-cycle position, degrees
-    uint64_t lastRGB;
-    uint32_t lastRGBColor;
 } A;
 
 static void analyzerSetup(double sr) {
@@ -293,7 +284,6 @@ static void analyzerSetup(double sr) {
     A.peak = kSilence;
     A.armed = YES;
     A.lastB = -1.0f;
-    A.lastRGBColor = 0xFFFFFFFFu;               // nothing sent yet
     biquadLowpass(&A.lp, 150.0, sr);
 }
 
@@ -326,28 +316,12 @@ static double spectralFlux(void) {
     return flux;
 }
 
-// Fully saturated color for a hue in degrees, as 0xRRGGBB.
-static uint32_t hueColor(double hue) {
-    double h = fmod(hue, 360.0) / 60.0, x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
-    double r = 0, g = 0, b = 0;
-    switch ((int)h) {
-        case 0:  r = 1; g = x; break;
-        case 1:  r = x; g = 1; break;
-        case 2:  g = 1; b = x; break;
-        case 3:  g = x; b = 1; break;
-        case 4:  r = x; b = 1; break;
-        default: r = 1; b = x; break;
-    }
-    return ((uint32_t)lround(r * 255) << 16) | ((uint32_t)lround(g * 255) << 8) | (uint32_t)lround(b * 255);
-}
-
 static void onFrame(double e, double raw) {
     BLOptions o = optsGet();
     uint64_t t = nowNs();
     A.frames++;
     bool kbOn = o.backlight && atomic_load(&gKBActive);
     bool hapOn = o.haptics && atomic_load(&gHapActive);
-    bool rgbOn = o.rgb && ORGBIsConnected();
 
     // Kick = bass energy jumps well above its recent average. Re-arm once it falls back.
     BOOL onset = NO;
@@ -358,7 +332,7 @@ static void onFrame(double e, double raw) {
     // Arp note = a local peak in spectral flux well above its recent average.
     // Peak-picking looks one frame back, so it lags by 10 ms.
     BOOL arpOnset = NO;
-    if (o.arp && (kbOn || rgbOn) && gDFT) {
+    if (o.arp && kbOn && gDFT) {
         double f = spectralFlux();
         if (A.frames > 50 &&                                  // let averages settle (~0.5 s)
             A.flux1 > A.flux2 && A.flux1 >= f &&
@@ -410,27 +384,6 @@ static void onFrame(double e, double raw) {
             A.lastB = b;
             A.lastKB = t;
             dispatch_async(gHWQ, ^{ kbSet(b); });
-        }
-    }
-
-    // RGB devices: the same brightness as the backlight (including arp flickers), in the
-    // chosen color. <= 25 updates/s; OpenRGB only applies the latest one anyway.
-    // Hue: a jump per kick, a steady flow (45 deg/s, one lap per 8 s), or a flow from
-    // 15 deg/s in quiet parts up to 255 deg/s at full level.
-    if (o.rgbMode == BLRGBKickCycle && onset) A.hue = fmod(A.hue + 47.0, 360.0);
-    else if (o.rgbMode == BLRGBRainbow) A.hue = fmod(A.hue + 45.0 * A.hopSec, 360.0);
-    else if (o.rgbMode == BLRGBReactiveRainbow) A.hue = fmod(A.hue + (15.0 + 240.0 * level) * A.hopSec, 360.0);
-    if (rgbOn && t - A.lastRGB >= 15000000ull && (flickNow || onset || t - A.lastRGB >= 40000000ull)) {
-        double bright = o.minB + (o.maxB - o.minB) * shown;
-        uint32_t base = o.rgbMode == BLRGBSolid ? o.rgbColor : hueColor(A.hue);
-        uint32_t r = (uint32_t)lround(((base >> 16) & 0xFF) * bright);
-        uint32_t g = (uint32_t)lround(((base >> 8) & 0xFF) * bright);
-        uint32_t bl = (uint32_t)lround((base & 0xFF) * bright);
-        uint32_t c = (r << 16) | (g << 8) | bl;
-        if (c != A.lastRGBColor) {
-            A.lastRGBColor = c;
-            A.lastRGB = t;
-            ORGBSetColor((uint8_t)r, (uint8_t)g, (uint8_t)bl);
         }
     }
 
@@ -659,14 +612,10 @@ void BLStart(BLOptions opts, BLStartCompletion completion) {
         if (opts.backlight && kbAcquire()) any = YES;
         if (opts.haptics && hapticOpen()) any = YES;
     });
-    if (opts.rgb) {   // connects in the background and keeps retrying until OpenRGB is up
-        ORGBSetEnabled(true, ORGB_DEFAULT_PORT);
-        any = YES;
-    }
     if (!any) {
         BLStop();
         completion(BLErrorNoOutputs,
-                   @"nothing to drive: the keyboard backlight, trackpad and RGB devices are turned off or not reachable on this Mac.");
+                   @"nothing to drive: the keyboard backlight and trackpad are turned off or not reachable on this Mac.");
         return;
     }
 
@@ -702,7 +651,6 @@ void BLStop(void) {
         kbRelease();
         hapticClose();
     });
-    ORGBSetEnabled(false, 0);   // puts RGB devices back to their own mode and colors
     os_unfair_lock_lock(&gLock);
     gMeter = (BLMeter){ 0 };
     os_unfair_lock_unlock(&gLock);
@@ -723,14 +671,12 @@ void BLUpdateOptions(BLOptions o) {
         if (o.haptics && !old.haptics) hapticOpen();
         else if (!o.haptics && old.haptics) hapticClose();
     });
-    if (o.rgb != old.rgb) ORGBSetEnabled(o.rgb, ORGB_DEFAULT_PORT);
 }
 
 void BLSetFailureHandler(void (^handler)(NSString *reason)) { gFailure = handler; }
 
 BOOL BLBacklightActive(void) { return atomic_load(&gKBActive); }
 BOOL BLHapticsActive(void) { return atomic_load(&gHapActive); }
-BOOL BLRGBConnected(void) { return ORGBIsConnected(); }
 
 BLMeter BLCurrentMeter(void) {
     os_unfair_lock_lock(&gLock);

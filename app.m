@@ -5,7 +5,6 @@
 #import <Cocoa/Cocoa.h>
 #import <ServiceManagement/ServiceManagement.h>
 #import "engine.h"
-#import "orgb.h"
 #include <signal.h>
 
 static NSString *const kSource      = @"source";        // @"system" or @"mic"
@@ -16,15 +15,10 @@ static NSString *const kHapticID    = @"hapticID";      // 3, 4, 6
 static NSString *const kBeatSens    = @"beatSens";
 static NSString *const kArpSens     = @"arpSens";
 static NSString *const kWasRunning  = @"wasRunning";
-static NSString *const kRGB         = @"rgb";
-static NSString *const kRGBColor    = @"rgbColor";      // 0xRRGGBB
-static NSString *const kRGBMode     = @"rgbMode";       // BLRGBMode
-static NSString *const kRGBCycleOld = @"rgbCycle";      // pre-rgbMode setting, migrated on launch
 
 static NSString *const kScreenSettingsURL = @"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 static NSString *const kMicSettingsURL    = @"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
 static NSString *const kRepoURL           = @"https://github.com/arnan-bajaj/beatlight";
-static NSString *const kRGBHelpURL        = @"https://github.com/arnan-bajaj/beatlight#rgb-devices-openrgb";
 
 typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRunning };
 
@@ -45,11 +39,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [NSUserDefaults.standardUserDefaults registerDefaults:@{
         kSource: @"system", kBacklight: @YES, kHaptics: @YES, kArp: @NO,
         kHapticID: @4, kBeatSens: @1.6, kArpSens: @1.5, kWasRunning: @YES,
-        kRGB: @NO, kRGBColor: @0xFFFFFF, kRGBMode: @(BLRGBSolid),
     }];
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    if ([defaults boolForKey:kRGBCycleOld]) [defaults setInteger:BLRGBKickCycle forKey:kRGBMode];
-    [defaults removeObjectForKey:kRGBCycleOld];
 
     self.item = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
     NSMenu *menu = [[NSMenu alloc] init];
@@ -84,9 +74,6 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     o.hapticID  = (int)[d integerForKey:kHapticID];
     o.sens      = [d doubleForKey:kBeatSens];
     o.arpSens   = [d doubleForKey:kArpSens];
-    o.rgb       = [d boolForKey:kRGB];
-    o.rgbColor  = (uint32_t)[d integerForKey:kRGBColor];
-    o.rgbMode   = (BLRGBMode)[d integerForKey:kRGBMode];
     return o;
 }
 
@@ -181,7 +168,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     switch (code) {
         case BLErrorScreenPermission: return @"Needs Screen & System Audio Recording permission";
         case BLErrorMicPermission:    return @"Needs microphone permission";
-        case BLErrorNoOutputs:        return @"Backlight, trackpad and RGB are all off or unavailable";
+        case BLErrorNoOutputs:        return @"Backlight and trackpad are off or unavailable";
         case BLErrorCancelled:
         case BLErrorNone:             return nil;
         default:                      return [self truncated:[self sentence:message]];
@@ -295,46 +282,6 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     return parent;
 }
 
-// RGB devices through OpenRGB: toggle (with connection status), connected devices, color.
-- (void)addRGBItemsTo:(NSMenu *)menu running:(BOOL)running enabled:(BOOL)rgbOn {
-    NSString *title = @"RGB Devices (OpenRGB)";
-    int count = BLRGBConnected() ? ORGBDeviceCount() : -1;
-    if (running && rgbOn)
-        title = count < 0 ? @"RGB Devices (waiting for OpenRGB…)"
-                          : [NSString stringWithFormat:@"RGB Devices (%d via OpenRGB)", count];
-    [self addToggle:title key:kRGB to:menu];
-    if (running && rgbOn && count > 0) {
-        char name[96];
-        for (int i = 0; i < 8 && ORGBDeviceName(i, name, sizeof name); i++) {
-            NSString *n = [NSString stringWithUTF8String:name] ?: @"Device";
-            NSMenuItem *it = [self add:n action:nil to:menu];
-            it.enabled = NO;
-            it.indentationLevel = 1;
-        }
-    }
-
-    NSMenuItem *color = [self addSubmenu:@"RGB Color" to:menu];
-    color.enabled = rgbOn;
-    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSInteger mode = [d integerForKey:kRGBMode];
-    NSInteger current = [d integerForKey:kRGBColor];
-    NSArray *colors = @[@[@"White", @0xFFFFFF], @[@"Red", @0xFF0000], @[@"Orange", @0xFF5000], @[@"Yellow", @0xFFC800],
-                        @[@"Green", @0x00FF00], @[@"Cyan", @0x00FFFF], @[@"Blue", @0x0000FF],
-                        @[@"Purple", @0x8000FF], @[@"Pink", @0xFF1080]];
-    for (NSArray *c in colors)
-        [self addChoice:c[0] action:@selector(setRGBColor:) value:c[1]
-                checked:mode == BLRGBSolid && current == [c[1] integerValue] to:color.submenu];
-    [color.submenu addItem:NSMenuItem.separatorItem];
-    // Cycle modes are stored as negative values: -(BLRGBMode).
-    [self addChoice:@"Color Cycle (changes on kicks)" action:@selector(setRGBColor:) value:@(-BLRGBKickCycle)
-            checked:mode == BLRGBKickCycle to:color.submenu];
-    [self addChoice:@"Rainbow (smooth)" action:@selector(setRGBColor:) value:@(-BLRGBRainbow)
-            checked:mode == BLRGBRainbow to:color.submenu];
-    [self addChoice:@"Rainbow (speeds up with the music)" action:@selector(setRGBColor:) value:@(-BLRGBReactiveRainbow)
-            checked:mode == BLRGBReactiveRainbow to:color.submenu];
-    [self add:@"RGB Setup Help…" action:@selector(openRGBHelp:) to:menu];
-}
-
 // Rebuilt every time it opens, so checkmarks and status are always current.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
@@ -342,7 +289,6 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     BOOL running = self.state == BLStateRunning;
     BOOL backlightOn = [d boolForKey:kBacklight];
     BOOL hapticsOn = [d boolForKey:kHaptics];
-    BOOL rgbOn = [d boolForKey:kRGB];
 
     [self addLabel:(running ? @"Beatlight is running"
                     : self.state == BLStateStarting ? @"Beatlight is starting…" : @"Beatlight is stopped") to:menu];
@@ -360,9 +306,9 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [self addToggle:(running && backlightOn && !BLBacklightActive() ? @"Keyboard Backlight (not available)"
                                                                       : @"Keyboard Backlight")
                 key:kBacklight to:menu];
-    [self addToggle:@"Arp Flicker" key:kArp to:menu].enabled = backlightOn || rgbOn;
+    [self addToggle:@"Arp Flicker" key:kArp to:menu].enabled = backlightOn;
     [self addSensitivity:@"Arp Sensitivity" key:kArpSens values:@[@2.0, @1.5, @1.3] to:menu].enabled =
-        (backlightOn || rgbOn) && [d boolForKey:kArp];
+        backlightOn && [d boolForKey:kArp];
     [menu addItem:NSMenuItem.separatorItem];
 
     [self addToggle:(running && hapticsOn && !BLHapticsActive() ? @"Trackpad Haptics (not available)"
@@ -374,9 +320,6 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [self addChoice:@"Weak" action:@selector(setHapticID:) value:@3 checked:hid == 3 to:strength.submenu];
     [self addChoice:@"Medium" action:@selector(setHapticID:) value:@4 checked:hid == 4 to:strength.submenu];
     [self addChoice:@"Strong" action:@selector(setHapticID:) value:@6 checked:hid == 6 to:strength.submenu];
-    [menu addItem:NSMenuItem.separatorItem];
-
-    [self addRGBItemsTo:menu running:running enabled:rgbOn];
     [menu addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *login = [self add:@"Launch at Login" action:@selector(toggleLogin:) to:menu];
@@ -428,22 +371,6 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
 - (void)setHapticID:(NSMenuItem *)sender {
     [NSUserDefaults.standardUserDefaults setInteger:[sender.representedObject integerValue] forKey:kHapticID];
     [self optionsChanged];
-}
-
-- (void)setRGBColor:(NSMenuItem *)sender {
-    NSInteger value = [sender.representedObject integerValue];
-    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    if (value < 0) {
-        [d setInteger:-value forKey:kRGBMode];
-    } else {
-        [d setInteger:BLRGBSolid forKey:kRGBMode];
-        [d setInteger:value forKey:kRGBColor];
-    }
-    [self optionsChanged];
-}
-
-- (void)openRGBHelp:(id)sender {
-    [self openURL:kRGBHelpURL];
 }
 
 - (void)toggleLogin:(id)sender {
