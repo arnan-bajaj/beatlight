@@ -89,7 +89,28 @@ Settings are remembered. If it was running when you quit, it starts again on the
 
 To keep it around, move `Beatlight.app` into your Applications folder; Spotlight will find it there.
 
-**After rebuilding:** the app is signed locally, so macOS may treat each new build as a different app and ask for permission again. If it keeps saying it needs permission, select Beatlight in Screen & System Audio Recording, remove it with **−**, then quit and reopen Beatlight and allow it again.
+**After rebuilding:** unless you set up a signing certificate, macOS treats each new build as a different app and asks for permission again. See [Permissions keep coming back](#permissions-keep-coming-back).
+
+#### Permissions keep coming back
+
+`build.sh` signs the app. With no certificate it uses an "ad-hoc" signature, which is different on every build, and macOS ties the permission to the signature. So every rebuild looks like a new app, and the old entry in System Settings no longer matches. Toggling it off and on doesn't help.
+
+Fix it once with a free self-signed certificate:
+
+1. Open **Keychain Access** (Spotlight → "Keychain Access").
+2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
+3. Name: `Beatlight Local`. Identity Type: **Self-Signed Root**. Certificate Type: **Code Signing**. Click **Create**.
+4. Rebuild with `bash build.sh`. It should print `Signed with "Beatlight Local"`. If macOS asks whether `codesign` may use the key, click **Always Allow**.
+5. Clear the stale permission entries once, then reopen:
+   ```sh
+   tccutil reset ScreenCapture com.arnanbajaj.beatlight
+   open Beatlight.app
+   ```
+6. Allow the permission when asked, then choose **Restart Beatlight** from the menu bar icon.
+
+From then on, rebuilds keep the permission. If you already have an **Apple Development** certificate from Xcode, `build.sh` uses that automatically instead.
+
+Also make sure Beatlight is in the top **Screen & System Audio Recording** list, not **System Audio Recording Only**.
 
 ### 5. Or use the command line
 
@@ -117,7 +138,8 @@ Play some music, then:
 |---|---|
 | `xcrun: error: invalid active developer path` | Command Line Tools aren't installed: redo step 1 |
 | `ld: ... tapi error: malformed file ... unknown architecture` | Your Xcode is older than your Command Line Tools. `build.sh` already uses the Command Line Tools when they're installed; if you still see this, update Xcode or run `sudo xcode-select -s /Library/Developer/CommandLineTools` |
-| App: "needs permission to hear your Mac's audio" | Step 4: turn on Beatlight, then quit and reopen it. Still stuck after a rebuild? Remove it with **−** and allow it again |
+| App: "needs permission to hear your Mac's audio" | Step 4: turn on Beatlight, then **Restart Beatlight** from the menu |
+| App asks for permission again after every rebuild | [Permissions keep coming back](#permissions-keep-coming-back) |
 | App: "Keyboard Backlight (not available)" in the menu | Your Mac's backlight isn't supported; haptics still work |
 | CLI: `no permission to capture system audio` | Step 5: turn on your terminal app, then quit and reopen it |
 | CLI: `keyboard backlight not reachable` | Your Mac's backlight isn't supported; haptics still work |

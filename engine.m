@@ -529,9 +529,16 @@ static BOOL isUserDeclined(NSError *err) {
     return [err.domain isEqualToString:SCStreamErrorDomain] && err.code == SCStreamErrorUserDeclined;
 }
 
+static BOOL gAskedScreenAccess;
+
 static void startSystemAudio(unsigned gen, BLStartCompletion finish) {
     if (!CGPreflightScreenCaptureAccess()) {
-        CGRequestScreenCaptureAccess();   // shows the system prompt the first time
+        // macOS only applies a new grant after the app restarts, so asking again in the
+        // same run would just pop the system prompt again. Ask once per launch.
+        if (!gAskedScreenAccess) {
+            gAskedScreenAccess = YES;
+            CGRequestScreenCaptureAccess();
+        }
         finish(BLErrorScreenPermission, kScreenPermissionMsg);
         return;
     }

@@ -35,6 +35,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
 @property (assign) NSUInteger startToken;      // ignores completions from superseded starts
 @property (assign) BOOL resumeAfterWake;
 @property (assign) BOOL retriedAfterFailure;
+@property (assign) BOOL needsRestart;          // permission granted this run only applies after a restart
 @end
 
 @implementation BLAppDelegate
@@ -111,6 +112,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
         }
         self.state = BLStateStopped;
         self.problem = [self shortProblem:code message:message];
+        if (code == BLErrorScreenPermission) self.needsRestart = YES;
         [self updateIcon];
         if (showErrors) [self showStartError:code message:message];
     });
@@ -206,9 +208,10 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     switch (code) {
         case BLErrorScreenPermission: {
             NSModalResponse r = [self alert:@"Beatlight needs permission to hear your Mac's audio"
-                info:@"Turn on Beatlight in System Settings > Privacy & Security > Screen & System Audio Recording, "
-                     @"then quit and reopen Beatlight.\n\nmacOS files audio capture under screen recording. "
-                     @"Beatlight ignores the screen and only uses the audio."
+                info:@"Turn on Beatlight in System Settings > Privacy & Security > Screen & System Audio Recording "
+                     @"(the top list, not \"System Audio Recording Only\"). Then choose Restart Beatlight from the "
+                     @"menu bar icon: macOS only applies the permission after a restart.\n\n"
+                     @"macOS files audio capture under screen recording. Beatlight ignores the screen and only uses the audio."
                 buttons:@[@"Open System Settings", @"Use Microphone Instead", @"Cancel"]];
             if (r == NSAlertFirstButtonReturn) {
                 [self openURL:kScreenSettingsURL];
@@ -347,6 +350,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [self addLabel:(running ? @"Beatlight is running"
                     : self.state == BLStateStarting ? @"Beatlight is starting…" : @"Beatlight is stopped") to:menu];
     if (self.state == BLStateStopped && self.problem) [self addLabel:self.problem to:menu];
+    if (self.needsRestart) [self add:@"Restart Beatlight (after granting permission)" action:@selector(relaunch:) to:menu];
     [self add:(self.state == BLStateStopped ? @"Start" : @"Stop") action:@selector(toggleRunning:) to:menu];
     [menu addItem:NSMenuItem.separatorItem];
 
@@ -460,6 +464,19 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
                info:@"macOS needs you to approve it in System Settings > General > Login Items."
             buttons:@[@"Open Login Items", @"Later"]] == NSAlertFirstButtonReturn)
         [SMAppService openSystemSettingsLoginItems];
+}
+
+// Quits and reopens the app, so a permission granted while it was running takes effect.
+- (void)relaunch:(id)sender {
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/bin/sh"];
+    task.arguments = @[@"-c", @"sleep 1; /usr/bin/open \"$0\"", NSBundle.mainBundle.bundlePath];
+    NSError *err = nil;
+    if (![task launchAndReturnError:&err]) {
+        [self alert:@"Couldn't restart Beatlight" info:@"Quit it from the menu and open it again." buttons:@[@"OK"]];
+        return;
+    }
+    [NSApp terminate:nil];   // restores the backlight; the shell reopens the app a second later
 }
 
 - (void)openRepo:(id)sender {
