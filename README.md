@@ -101,8 +101,9 @@ Fix it once with a free self-signed certificate:
 2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
 3. Name: `Beatlight Local`. Identity Type: **Self-Signed Root**. Certificate Type: **Code Signing**. Click **Create**.
 4. Rebuild with `bash build.sh`. It should print `Signed with "Beatlight Local"`. If macOS asks whether `codesign` may use the key, click **Always Allow**.
-5. Clear the stale permission entries once, then reopen:
+5. Clear the stale permission entries once, then reopen. The first line registers the new build with macOS; without it, `tccutil` fails with `No such bundle identifier` (error -10814).
    ```sh
+   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f Beatlight.app
    tccutil reset ScreenCapture com.arnanbajaj.beatlight
    open Beatlight.app
    ```
@@ -140,6 +141,8 @@ Play some music, then:
 | `ld: ... tapi error: malformed file ... unknown architecture` | Your Xcode is older than your Command Line Tools. `build.sh` already uses the Command Line Tools when they're installed; if you still see this, update Xcode or run `sudo xcode-select -s /Library/Developer/CommandLineTools` |
 | App: "needs permission to hear your Mac's audio" | Step 4: turn on Beatlight, then **Restart Beatlight** from the menu |
 | App asks for permission again after every rebuild | [Permissions keep coming back](#permissions-keep-coming-back) |
+| `tccutil: No such bundle identifier` (-10814) | macOS doesn't know the new build yet: see step 5 of [Permissions keep coming back](#permissions-keep-coming-back) |
+| `setup-launcher.sh`: `Bootstrap failed: 5` | The old background job was still unloading; run the script again |
 | App: "Keyboard Backlight (not available)" in the menu | Your Mac's backlight isn't supported; haptics still work |
 | CLI: `no permission to capture system audio` | Step 5: turn on your terminal app, then quit and reopen it |
 | CLI: `keyboard backlight not reachable` | Your Mac's backlight isn't supported; haptics still work |
@@ -184,13 +187,34 @@ beatlight can pulse other RGB gear along with the keyboard, such as a Logitech G
 
 ### Setup
 
-1. **Quit Logitech G HUB completely** (its menu bar icon → Quit) and turn off its launch at login. G HUB and OpenRGB both try to control the lighting and will fight each other.
-2. **Install and open OpenRGB** for macOS from [openrgb.org](https://openrgb.org). Allow any permission it asks for.
-3. **Check your devices in OpenRGB first.** Each one should be listed, and changing its color in OpenRGB should change the real device. If a device isn't listed or doesn't respond, beatlight can't drive it either; that's an OpenRGB issue.
-4. **Start OpenRGB's SDK server:** SDK Server tab → **Start Server**. To have it start automatically, launch OpenRGB with `--server`.
-5. **Turn it on in beatlight:** menu → **RGB Devices (OpenRGB)**, then pick an **RGB Color**. On the command line: `./beatlight -v --rgb --rgb-color ff0000`, or `--rgb-mode rainbow`.
+1. **Quit Logitech G HUB completely** and turn off its launch at login. G HUB and OpenRGB both try to control the lighting and will fight each other. Check that nothing of it is left running with `pgrep -fl lghub`; if that prints anything, run `pkill -f lghub`.
+2. **Install OpenRGB 1.0 or later** for macOS from [openrgb.org](https://openrgb.org), into `/Applications`. Older versions don't have the "Logitech HID++ 2.0" detector this setup relies on.
+3. **Logitech devices on a LIGHTSPEED or POWERPLAY receiver** (a G502 LIGHTSPEED, a POWERPLAY mat): in OpenRGB, go to **Settings → Supported Devices**, uncheck **Logitech G Powerplay Mousepad** and **Logitech Lightspeed Receiver**, and keep **Logitech HID++ 2.0** checked. On macOS, OpenRGB 1.0 and 1.1 still skip those devices because of a bug ([below](#openrgb-receiver-bug-on-macos)). Fix it by building a patched OpenRGB, which takes about 20–30 minutes, mostly waiting:
+   ```sh
+   bash scripts/build-openrgb-fixed.sh
+   ```
+4. **Check your devices in OpenRGB.** Each one should be listed, and setting it to red in **Direct** mode should change the real device. Devices behind a receiver show the name they report: the G502 appears as "G502 LIGHTSPEED Wireless Gaming Mouse" and the POWERPLAY mat as "Candy companion chip". A wireless headset only appears while it's switched on. If a device isn't listed or doesn't respond, beatlight can't drive it either.
+5. **Run the OpenRGB server.** Either open OpenRGB and click **SDK Server → Start Server** (it must stay open), or set up a hidden server plus a one-click launcher:
+   ```sh
+   bash scripts/setup-launcher.sh
+   ```
+   This adds **Beatlight** to `/Applications`. Opening it starts OpenRGB's server in the background (no window, no Dock icon, local connections only) and opens Beatlight. To change OpenRGB settings later, run `scripts/beatlight-ctl.sh settings` to get the OpenRGB window; opening Beatlight again goes back to the hidden server. `scripts/beatlight-ctl.sh stop` quits both.
+6. **Turn it on in beatlight:** menu → **RGB Devices (OpenRGB)**, then pick an **RGB Color**. On the command line: `./beatlight -v --rgb --rgb-color ff0000`, or `--rgb-mode rainbow`.
 
-The menu shows "waiting for OpenRGB…" until it connects, then lists the devices it's driving. beatlight checks for OpenRGB every 3 seconds, so the order you open the two apps doesn't matter.
+The menu shows "waiting for OpenRGB…" until it connects, then lists the devices it's driving. beatlight checks for OpenRGB every 3 seconds, so the order you start the two doesn't matter.
+
+### OpenRGB receiver bug on macOS
+
+OpenRGB's "Logitech HID++ 2.0" detector finds every device paired to a receiver, but it skips a device when an older detector "owns" it, and it treats an older detector that's missing from the settings as enabled. On macOS, the older detectors for these devices ("Logitech G502 Wireless Gaming Mouse", "Logitech Powerplay Mat") aren't built at all. They never appear in the settings, so they always count as enabled, and nothing drives the devices. Adding them to `OpenRGB.json` by hand doesn't help, because OpenRGB deletes unknown detectors from the settings on every scan.
+
+`scripts/build-openrgb-fixed.sh` builds OpenRGB 1.1 with `HIDPP20SlotOwnedByLegacy()` returning `false` for a detector missing from the settings. That's safe because OpenRGB adds every detector that does exist on the platform to the settings before it scans. It installs the result in `/Applications` and keeps your original at `~/OpenRGB-fixed/OpenRGB-original.app`.
+
+To see what OpenRGB detected, start it with detailed logging and read its newest log (logs are in `~/.config/OpenRGB/logs`):
+```sh
+open -a OpenRGB --args --loglevel 5
+grep -iE "receiver|slot=" "$(ls -td ~/.config/OpenRGB/logs/* | head -1)"
+```
+`is owned by '…', leaving it alone` means the bug above; `is device …` means the device was picked up.
 
 ### What it does
 
@@ -207,7 +231,7 @@ The menu shows "waiting for OpenRGB…" until it connects, then lists the device
 ### Caveats
 
 - **Wireless lag and battery:** color updates share the wireless link with everything else, so wireless devices may lag the keyboard slightly or skip updates. RGB also drains wireless batteries faster.
-- **OpenRGB on macOS is less mature** than on Windows and Linux, and some Logitech devices have detection problems there. Step 3 tells you quickly whether your setup works.
+- **OpenRGB on macOS is less mature** than on Windows and Linux. Step 4 tells you quickly whether your devices work.
 
 ## Hardware safety
 
@@ -215,4 +239,4 @@ The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an
 
 ## Status
 
-The command-line tool builds on macOS with the Command Line Tools. The menu bar app is new and not yet verified on hardware. The OpenRGB client (`orgb.c`) is tested against a simulated OpenRGB server but not yet with real devices; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
+Runs on macOS 27 on Apple Silicon. The RGB output works with a G502 LIGHTSPEED and a POWERPLAY mat through the patched OpenRGB 1.1 above, and the OpenRGB client (`orgb.c`) is also tested against a simulated OpenRGB server; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
