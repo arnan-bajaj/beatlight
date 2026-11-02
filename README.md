@@ -1,5 +1,7 @@
 # beatlight
 
+> **This is the `rgb` branch:** everything on `main`, plus pulsing RGB devices (mice, headsets, mousepads) through [OpenRGB](#rgb-devices-openrgb). It's experimental and not yet verified with real devices. For the stable version, use `main`.
+
 Pulse a MacBook's keyboard backlight and trackpad haptics to whatever audio is playing.
 
 - **Backlight** follows the bass envelope (150 Hz low-pass, 10 ms RMS frames, auto-gain over ~4 s), updated at most 30×/s.
@@ -114,6 +116,7 @@ Play some music, then:
 | Message | Fix |
 |---|---|
 | `xcrun: error: invalid active developer path` | Command Line Tools aren't installed: redo step 1 |
+| `ld: ... tapi error: malformed file ... unknown architecture` | Your Xcode is older than your Command Line Tools. `build.sh` already uses the Command Line Tools when they're installed; if you still see this, update Xcode or run `sudo xcode-select -s /Library/Developer/CommandLineTools` |
 | App: "needs permission to hear your Mac's audio" | Step 4: turn on Beatlight, then quit and reopen it. Still stuck after a rebuild? Remove it with **−** and allow it again |
 | App: "Keyboard Backlight (not available)" in the menu | Your Mac's backlight isn't supported; haptics still work |
 | CLI: `no permission to capture system audio` | Step 5: turn on your terminal app, then quit and reopen it |

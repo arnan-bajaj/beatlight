@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Use the Command Line Tools' own compiler, linker and SDK when they're installed. If
+# xcode-select points at an older Xcode, its linker can't read a newer Command Line Tools
+# SDK ("tapi error: malformed file ... unknown architecture").
+if [[ -z "${DEVELOPER_DIR:-}" && -d /Library/Developer/CommandLineTools/usr/bin ]]; then
+  export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+fi
+
 CFLAGS=(-fobjc-arc -O2 -Wall -Wextra -Wno-unused-parameter -mmacosx-version-min=13.0)
 FRAMEWORKS=(-framework Foundation -framework Accelerate -framework AVFoundation -framework CoreGraphics
             -framework CoreMedia -framework IOKit -framework ScreenCaptureKit)
