@@ -10,6 +10,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 #define BL_HAPTIC_RATE_CAP 8.0   // hard ceiling on trackpad taps per second, regardless of options
 
+// How RGB devices pick their color. Every device always shows the same color.
+typedef NS_ENUM(NSInteger, BLRGBMode) {
+    BLRGBSolid = 0,          // rgbColor
+    BLRGBKickCycle,          // jump to a new hue on every kick
+    BLRGBRainbow,            // flow smoothly through the hues (one lap per 8 s)
+    BLRGBReactiveRainbow,    // flow faster when the music is louder
+};
+
 typedef struct {
     BOOL useMic;        // listen through the microphone instead of system audio
     BOOL backlight;     // drive the keyboard backlight
@@ -22,8 +30,8 @@ typedef struct {
     double arpSens;     // arp threshold: multiple of the running spectral-flux average, > 1
     float arpDepth;     // backlight flicker strength, 0..1
     BOOL rgb;           // also pulse RGB devices through OpenRGB's SDK server (orgb.c)
-    uint32_t rgbColor;  // 0xRRGGBB pulse color
-    BOOL rgbCycle;      // ignore rgbColor; step through the hues, one step per kick
+    uint32_t rgbColor;  // 0xRRGGBB pulse color (BLRGBSolid)
+    BLRGBMode rgbMode;  // solid color, or one of the hue cycles
 } BLOptions;
 
 typedef NS_ENUM(NSInteger, BLError) {

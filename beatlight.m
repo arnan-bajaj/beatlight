@@ -30,7 +30,9 @@ static void usage(void) {
         "  --arp-depth X      backlight flicker strength, 0-1 (default 0.8)\n"
         "  --rgb              also pulse RGB devices through OpenRGB (its SDK server must be running)\n"
         "  --rgb-color RRGGBB pulse color for RGB devices, hex (default ffffff)\n"
-        "  --rgb-cycle        step through colors, one step per kick, instead of one color\n"
+        "  --rgb-mode MODE    solid (default, uses --rgb-color), kick (new color each kick),\n"
+        "                     rainbow (smooth flow), reactive (flows faster when louder)\n"
+        "  --rgb-cycle        same as --rgb-mode kick\n"
         "  -v, --verbose      show a live level meter\n");
 }
 
@@ -53,6 +55,17 @@ static uint32_t argHex(int argc, const char *argv[], int *i) {
     return (uint32_t)v;
 }
 
+static BLRGBMode argMode(int argc, const char *argv[], int *i) {
+    if (*i + 1 >= argc) { fprintf(stderr, "beatlight: %s needs a value\n", argv[*i]); exit(2); }
+    const char *s = argv[++*i];
+    if (!strcmp(s, "solid"))    return BLRGBSolid;
+    if (!strcmp(s, "kick"))     return BLRGBKickCycle;
+    if (!strcmp(s, "rainbow"))  return BLRGBRainbow;
+    if (!strcmp(s, "reactive")) return BLRGBReactiveRainbow;
+    fprintf(stderr, "beatlight: --rgb-mode must be solid, kick, rainbow or reactive\n");
+    exit(2);
+}
+
 static BLOptions parseArgs(int argc, const char *argv[]) {
     BLOptions o = BLDefaultOptions();
     for (int i = 1; i < argc; i++) {
@@ -70,7 +83,8 @@ static BLOptions parseArgs(int argc, const char *argv[]) {
         else if (!strcmp(a, "--arp-depth"))     o.arpDepth = (float)argNum(argc, argv, &i);
         else if (!strcmp(a, "--rgb"))           o.rgb = YES;
         else if (!strcmp(a, "--rgb-color"))     o.rgbColor = argHex(argc, argv, &i);
-        else if (!strcmp(a, "--rgb-cycle"))     o.rgbCycle = YES;
+        else if (!strcmp(a, "--rgb-cycle"))     o.rgbMode = BLRGBKickCycle;
+        else if (!strcmp(a, "--rgb-mode"))      o.rgbMode = argMode(argc, argv, &i);
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) gVerbose = YES;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); exit(0); }
         else { fprintf(stderr, "beatlight: unknown option %s\n", a); usage(); exit(2); }

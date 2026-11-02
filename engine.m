@@ -84,7 +84,7 @@ BLOptions BLDefaultOptions(void) {
     return (BLOptions){ .useMic = NO, .backlight = YES, .haptics = YES, .arp = NO,
                         .minB = 0.05f, .maxB = 1.0f, .sens = 1.6, .hapticRate = 4.0, .hapticID = 4,
                         .arpSens = 1.5, .arpDepth = 0.8f,
-                        .rgb = NO, .rgbColor = 0xFFFFFF, .rgbCycle = NO };
+                        .rgb = NO, .rgbColor = 0xFFFFFF, .rgbMode = BLRGBSolid };
 }
 
 BLOptions BLClampOptions(BLOptions o) {
@@ -97,6 +97,7 @@ BLOptions BLClampOptions(BLOptions o) {
     if (!(o.hapticRate > 0.0)) { o.haptics = NO; o.hapticRate = 4.0; }
     if (o.hapticRate > BL_HAPTIC_RATE_CAP) o.hapticRate = BL_HAPTIC_RATE_CAP;
     o.rgbColor &= 0xFFFFFFu;
+    if (o.rgbMode < BLRGBSolid || o.rgbMode > BLRGBReactiveRainbow) o.rgbMode = BLRGBSolid;
     return o;
 }
 
@@ -414,10 +415,14 @@ static void onFrame(double e, double raw) {
 
     // RGB devices: the same brightness as the backlight (including arp flickers), in the
     // chosen color. <= 25 updates/s; OpenRGB only applies the latest one anyway.
-    if (onset && o.rgbCycle) A.hue = fmod(A.hue + 47.0, 360.0);
+    // Hue: a jump per kick, a steady flow (45 deg/s, one lap per 8 s), or a flow from
+    // 15 deg/s in quiet parts up to 255 deg/s at full level.
+    if (o.rgbMode == BLRGBKickCycle && onset) A.hue = fmod(A.hue + 47.0, 360.0);
+    else if (o.rgbMode == BLRGBRainbow) A.hue = fmod(A.hue + 45.0 * A.hopSec, 360.0);
+    else if (o.rgbMode == BLRGBReactiveRainbow) A.hue = fmod(A.hue + (15.0 + 240.0 * level) * A.hopSec, 360.0);
     if (rgbOn && t - A.lastRGB >= 15000000ull && (flickNow || onset || t - A.lastRGB >= 40000000ull)) {
         double bright = o.minB + (o.maxB - o.minB) * shown;
-        uint32_t base = o.rgbCycle ? hueColor(A.hue) : o.rgbColor;
+        uint32_t base = o.rgbMode == BLRGBSolid ? o.rgbColor : hueColor(A.hue);
         uint32_t r = (uint32_t)lround(((base >> 16) & 0xFF) * bright);
         uint32_t g = (uint32_t)lround(((base >> 8) & 0xFF) * bright);
         uint32_t bl = (uint32_t)lround((base & 0xFF) * bright);

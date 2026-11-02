@@ -80,7 +80,7 @@ Don't want to grant that? Choose **Audio Source → Microphone** in the menu ins
 | Trackpad Haptics | Tap the trackpad on kicks (max 4 taps/s) |
 | Haptic Strength | Weak / Medium / Strong |
 | RGB Devices (OpenRGB) | Pulse your RGB gear too ([setup](#rgb-devices-openrgb)); lists the connected devices |
-| RGB Color | Pulse color, or Color Cycle (new color on each kick) |
+| RGB Color | A solid color, Color Cycle (new color each kick), or a smooth rainbow (steady, or faster when louder) |
 | Launch at Login | Start Beatlight when you log in |
 
 Settings are remembered. If it was running when you quit, it starts again on the next launch. It pauses while the Mac sleeps and resumes on wake. Quitting always restores the backlight.
@@ -137,7 +137,8 @@ Play some music, then:
 | `--arp-depth X` | 0.8 | Backlight flicker strength, 0–1 |
 | `--rgb` | off | Also pulse RGB devices through OpenRGB ([setup](#rgb-devices-openrgb)) |
 | `--rgb-color RRGGBB` | ffffff | Pulse color for RGB devices |
-| `--rgb-cycle` | off | New color on each kick instead of one color |
+| `--rgb-mode MODE` | solid | `solid` (uses `--rgb-color`), `kick` (new color each kick), `rainbow` (smooth flow), `reactive` (flows faster when louder) |
+| `--rgb-cycle` | off | Same as `--rgb-mode kick` |
 | `-v`, `--verbose` | off | Live level meter |
 
 ### Arp mode
@@ -162,14 +163,19 @@ beatlight can pulse other RGB gear along with the keyboard, such as a Logitech G
 2. **Install and open OpenRGB** for macOS from [openrgb.org](https://openrgb.org). Allow any permission it asks for.
 3. **Check your devices in OpenRGB first.** Each one should be listed, and changing its color in OpenRGB should change the real device. If a device isn't listed or doesn't respond, beatlight can't drive it either; that's an OpenRGB issue.
 4. **Start OpenRGB's SDK server:** SDK Server tab → **Start Server**. To have it start automatically, launch OpenRGB with `--server`.
-5. **Turn it on in beatlight:** menu → **RGB Devices (OpenRGB)**, then pick an **RGB Color**. On the command line: `./beatlight -v --rgb --rgb-color ff0000`, or `--rgb-cycle`.
+5. **Turn it on in beatlight:** menu → **RGB Devices (OpenRGB)**, then pick an **RGB Color**. On the command line: `./beatlight -v --rgb --rgb-color ff0000`, or `--rgb-mode rainbow`.
 
 The menu shows "waiting for OpenRGB…" until it connects, then lists the devices it's driving. beatlight checks for OpenRGB every 3 seconds, so the order you open the two apps doesn't matter.
 
 ### What it does
 
 - Every device OpenRGB lists is switched to its Direct mode and pulses with the same brightness as the keyboard backlight, including [arp](#arp-mode) flickers. Turn off detection in OpenRGB for anything you want left alone.
-- **Color Cycle** moves to a new hue on every kick.
+- Color modes (**RGB Color** menu). Every device shows the same color at the same moment, pulsing with the beat:
+  - a **solid color**;
+  - **Color Cycle**: jumps to a new hue on every kick;
+  - **Rainbow (smooth)**: flows through the colors, one lap every 8 seconds;
+  - **Rainbow (speeds up with the music)**: drifts slowly in quiet parts and races through the colors when the music is loud.
+- The keyboard backlight is white-only hardware, so it pulses with the others but can't change color.
 - Stopping or quitting beatlight puts each device back to the mode and colors it had in OpenRGB.
 - The RGB output works even with the keyboard backlight turned off.
 

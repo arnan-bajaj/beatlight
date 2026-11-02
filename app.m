@@ -18,7 +18,8 @@ static NSString *const kArpSens     = @"arpSens";
 static NSString *const kWasRunning  = @"wasRunning";
 static NSString *const kRGB         = @"rgb";
 static NSString *const kRGBColor    = @"rgbColor";      // 0xRRGGBB
-static NSString *const kRGBCycle    = @"rgbCycle";
+static NSString *const kRGBMode     = @"rgbMode";       // BLRGBMode
+static NSString *const kRGBCycleOld = @"rgbCycle";      // pre-rgbMode setting, migrated on launch
 
 static NSString *const kScreenSettingsURL = @"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 static NSString *const kMicSettingsURL    = @"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
@@ -44,8 +45,11 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [NSUserDefaults.standardUserDefaults registerDefaults:@{
         kSource: @"system", kBacklight: @YES, kHaptics: @YES, kArp: @NO,
         kHapticID: @4, kBeatSens: @1.6, kArpSens: @1.5, kWasRunning: @YES,
-        kRGB: @NO, kRGBColor: @0xFFFFFF, kRGBCycle: @NO,
+        kRGB: @NO, kRGBColor: @0xFFFFFF, kRGBMode: @(BLRGBSolid),
     }];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults boolForKey:kRGBCycleOld]) [defaults setInteger:BLRGBKickCycle forKey:kRGBMode];
+    [defaults removeObjectForKey:kRGBCycleOld];
 
     self.item = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
     NSMenu *menu = [[NSMenu alloc] init];
@@ -82,7 +86,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     o.arpSens   = [d doubleForKey:kArpSens];
     o.rgb       = [d boolForKey:kRGB];
     o.rgbColor  = (uint32_t)[d integerForKey:kRGBColor];
-    o.rgbCycle  = [d boolForKey:kRGBCycle];
+    o.rgbMode   = (BLRGBMode)[d integerForKey:kRGBMode];
     return o;
 }
 
@@ -312,17 +316,22 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     NSMenuItem *color = [self addSubmenu:@"RGB Color" to:menu];
     color.enabled = rgbOn;
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    BOOL cycle = [d boolForKey:kRGBCycle];
+    NSInteger mode = [d integerForKey:kRGBMode];
     NSInteger current = [d integerForKey:kRGBColor];
     NSArray *colors = @[@[@"White", @0xFFFFFF], @[@"Red", @0xFF0000], @[@"Orange", @0xFF5000], @[@"Yellow", @0xFFC800],
                         @[@"Green", @0x00FF00], @[@"Cyan", @0x00FFFF], @[@"Blue", @0x0000FF],
                         @[@"Purple", @0x8000FF], @[@"Pink", @0xFF1080]];
     for (NSArray *c in colors)
         [self addChoice:c[0] action:@selector(setRGBColor:) value:c[1]
-                checked:!cycle && current == [c[1] integerValue] to:color.submenu];
+                checked:mode == BLRGBSolid && current == [c[1] integerValue] to:color.submenu];
     [color.submenu addItem:NSMenuItem.separatorItem];
-    [self addChoice:@"Color Cycle (changes on kicks)" action:@selector(setRGBColor:) value:@(-1)
-            checked:cycle to:color.submenu];
+    // Cycle modes are stored as negative values: -(BLRGBMode).
+    [self addChoice:@"Color Cycle (changes on kicks)" action:@selector(setRGBColor:) value:@(-BLRGBKickCycle)
+            checked:mode == BLRGBKickCycle to:color.submenu];
+    [self addChoice:@"Rainbow (smooth)" action:@selector(setRGBColor:) value:@(-BLRGBRainbow)
+            checked:mode == BLRGBRainbow to:color.submenu];
+    [self addChoice:@"Rainbow (speeds up with the music)" action:@selector(setRGBColor:) value:@(-BLRGBReactiveRainbow)
+            checked:mode == BLRGBReactiveRainbow to:color.submenu];
     [self add:@"RGB Setup Help…" action:@selector(openRGBHelp:) to:menu];
 }
 
@@ -425,9 +434,9 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     NSInteger value = [sender.representedObject integerValue];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     if (value < 0) {
-        [d setBool:YES forKey:kRGBCycle];
+        [d setInteger:-value forKey:kRGBMode];
     } else {
-        [d setBool:NO forKey:kRGBCycle];
+        [d setInteger:BLRGBSolid forKey:kRGBMode];
         [d setInteger:value forKey:kRGBColor];
     }
     [self optionsChanged];
