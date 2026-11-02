@@ -580,22 +580,20 @@ static void startMic(unsigned gen, BLStartCompletion finish) {
 }
 
 static void startMicWithPermission(unsigned gen, BLStartCompletion finish) {
-    switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]) {
-        case AVAuthorizationStatusAuthorized:
-            startMic(gen, finish);
-            break;
-        case AVAuthorizationStatusNotDetermined:
-            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (gen != atomic_load(&gGen)) { finish(BLErrorCancelled, @"Stopped."); return; }
-                    if (granted) startMic(gen, finish);
-                    else finish(BLErrorMicPermission, kMicPermissionMsg);
-                });
-            }];
-            break;
-        default:
-            finish(BLErrorMicPermission, kMicPermissionMsg);
-            break;
+    // if/else rather than switch: ARC won't allow a block literal inside an unscoped case.
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (status == AVAuthorizationStatusAuthorized) {
+        startMic(gen, finish);
+    } else if (status == AVAuthorizationStatusNotDetermined) {
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (gen != atomic_load(&gGen)) { finish(BLErrorCancelled, @"Stopped."); return; }
+                if (granted) startMic(gen, finish);
+                else finish(BLErrorMicPermission, kMicPermissionMsg);
+            });
+        }];
+    } else {
+        finish(BLErrorMicPermission, kMicPermissionMsg);
     }
 }
 
