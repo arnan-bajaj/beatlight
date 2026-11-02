@@ -21,13 +21,16 @@ typedef struct {
     int hapticID;       // actuation pattern: 3 weak, 4 medium, 6 strong
     double arpSens;     // arp threshold: multiple of the running spectral-flux average, > 1
     float arpDepth;     // backlight flicker strength, 0..1
+    BOOL rgb;           // also pulse RGB devices through OpenRGB's SDK server (orgb.c)
+    uint32_t rgbColor;  // 0xRRGGBB pulse color
+    BOOL rgbCycle;      // ignore rgbColor; step through the hues, one step per kick
 } BLOptions;
 
 typedef NS_ENUM(NSInteger, BLError) {
     BLErrorNone = 0,
     BLErrorScreenPermission,   // no Screen & System Audio Recording permission
     BLErrorMicPermission,      // no microphone permission
-    BLErrorNoOutputs,          // neither the backlight nor the trackpad could be used
+    BLErrorNoOutputs,          // no backlight, trackpad or RGB output is turned on and reachable
     BLErrorCancelled,          // BLStop() was called before the start finished
     BLErrorOther,
 };
@@ -62,6 +65,7 @@ void BLSetFailureHandler(void (^_Nullable handler)(NSString *reason));
 
 BOOL BLBacklightActive(void);   // backlight is actually being driven
 BOOL BLHapticsActive(void);     // trackpad actuator is actually open
+BOOL BLRGBConnected(void);      // connected to OpenRGB (devices: ORGBDeviceCount/ORGBDeviceName in orgb.h)
 BLMeter BLCurrentMeter(void);
 
 NS_ASSUME_NONNULL_END

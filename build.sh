@@ -8,7 +8,7 @@ CFLAGS=(-fobjc-arc -O2 -Wall -Wextra -Wno-unused-parameter -mmacosx-version-min=
 FRAMEWORKS=(-framework Foundation -framework Accelerate -framework AVFoundation -framework CoreGraphics
             -framework CoreMedia -framework IOKit -framework ScreenCaptureKit)
 
-clang "${CFLAGS[@]}" -o beatlight beatlight.m engine.m "${FRAMEWORKS[@]}"
+clang "${CFLAGS[@]}" -o beatlight beatlight.m engine.m orgb.c "${FRAMEWORKS[@]}"
 echo "Built ./beatlight"
 
 # Quit a running copy of the app first (it restores the backlight on quit).
@@ -18,7 +18,7 @@ APP=Beatlight.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp Info.plist "$APP/Contents/Info.plist"
-clang "${CFLAGS[@]}" -o "$APP/Contents/MacOS/Beatlight" app.m engine.m "${FRAMEWORKS[@]}" \
+clang "${CFLAGS[@]}" -o "$APP/Contents/MacOS/Beatlight" app.m engine.m orgb.c "${FRAMEWORKS[@]}" \
   -framework Cocoa -framework ServiceManagement
 codesign --force --sign - "$APP"   # ad-hoc signature: required on Apple Silicon, ties permissions to the app
 echo "Built ./$APP — start it with: open $APP"

@@ -5,6 +5,7 @@
 
 #import <Foundation/Foundation.h>
 #import "engine.h"
+#import "orgb.h"
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -27,6 +28,9 @@ static void usage(void) {
         "  --arp              flicker the keyboard backlight on synth/arpeggio notes (250 Hz-4 kHz)\n"
         "  --arp-sens X       arp threshold vs. running average, >1 (default 1.5; lower = more flickers)\n"
         "  --arp-depth X      backlight flicker strength, 0-1 (default 0.8)\n"
+        "  --rgb              also pulse RGB devices through OpenRGB (its SDK server must be running)\n"
+        "  --rgb-color RRGGBB pulse color for RGB devices, hex (default ffffff)\n"
+        "  --rgb-cycle        step through colors, one step per kick, instead of one color\n"
         "  -v, --verbose      show a live level meter\n");
 }
 
@@ -37,6 +41,16 @@ static double argNum(int argc, const char *argv[], int *i) {
     double v = strtod(s, &end);
     if (end == s || *end != '\0') { fprintf(stderr, "beatlight: bad number '%s'\n", s); exit(2); }
     return v;
+}
+
+static uint32_t argHex(int argc, const char *argv[], int *i) {
+    if (*i + 1 >= argc) { fprintf(stderr, "beatlight: %s needs a value\n", argv[*i]); exit(2); }
+    const char *s = argv[++*i];
+    if (s[0] == '#') s++;
+    char *end = NULL;
+    unsigned long v = strtoul(s, &end, 16);
+    if (strlen(s) != 6 || *end != '\0') { fprintf(stderr, "beatlight: color must be 6 hex digits, like ff2200\n"); exit(2); }
+    return (uint32_t)v;
 }
 
 static BLOptions parseArgs(int argc, const char *argv[]) {
@@ -54,14 +68,17 @@ static BLOptions parseArgs(int argc, const char *argv[]) {
         else if (!strcmp(a, "--arp"))           o.arp = YES;
         else if (!strcmp(a, "--arp-sens"))      o.arpSens = argNum(argc, argv, &i);
         else if (!strcmp(a, "--arp-depth"))     o.arpDepth = (float)argNum(argc, argv, &i);
+        else if (!strcmp(a, "--rgb"))           o.rgb = YES;
+        else if (!strcmp(a, "--rgb-color"))     o.rgbColor = argHex(argc, argv, &i);
+        else if (!strcmp(a, "--rgb-cycle"))     o.rgbCycle = YES;
         else if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) gVerbose = YES;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); exit(0); }
         else { fprintf(stderr, "beatlight: unknown option %s\n", a); usage(); exit(2); }
     }
     if (o.hapticRate > BL_HAPTIC_RATE_CAP)
         fprintf(stderr, "beatlight: haptic rate capped at %.0f/s\n", BL_HAPTIC_RATE_CAP);
-    if (o.arp && !o.backlight)
-        fprintf(stderr, "beatlight: --arp needs the backlight; ignoring it.\n");
+    if (o.arp && !o.backlight && !o.rgb)
+        fprintf(stderr, "beatlight: --arp needs the backlight or --rgb; ignoring it.\n");
     return BLClampOptions(o);
 }
 
@@ -74,6 +91,28 @@ static void stopAndExit(int code) {
 
 static dispatch_source_t gSignals[2];
 static dispatch_source_t gMeterTimer;
+static dispatch_source_t gRGBTimer;
+
+// Reports OpenRGB connection changes once a second.
+static void watchRGB(void) {
+    __block int lastCount = -1;
+    gRGBTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(gRGBTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_SEC / 10);
+    dispatch_source_set_event_handler(gRGBTimer, ^{
+        int count = ORGBIsConnected() ? ORGBDeviceCount() : -1;
+        if (count == lastCount) return;
+        const char *nl = gVerbose ? "\n" : "";
+        if (count < 0) {
+            fprintf(stderr, "%sbeatlight: waiting for OpenRGB (open it and click SDK Server > Start Server)...\n", nl);
+        } else {
+            fprintf(stderr, "%sbeatlight: OpenRGB connected, %d device%s:\n", nl, count, count == 1 ? "" : "s");
+            char name[96];
+            for (int i = 0; ORGBDeviceName(i, name, sizeof name); i++) fprintf(stderr, "  %s\n", name);
+        }
+        lastCount = count;
+    });
+    dispatch_resume(gRGBTimer);
+}
 
 static void startMeter(void) {
     gMeterTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
@@ -124,6 +163,7 @@ int main(int argc, const char *argv[]) {
                 fprintf(stderr, "beatlight: trackpad actuator not reachable; continuing without haptics.\n");
             fprintf(stderr, "beatlight: listening %s. Ctrl-C to stop.\n",
                     opts.useMic ? "on the microphone" : "to system audio");
+            if (opts.rgb) watchRGB();
             if (gVerbose) startMeter();
         });
 

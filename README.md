@@ -5,6 +5,7 @@ Pulse a MacBook's keyboard backlight and trackpad haptics to whatever audio is p
 - **Backlight** follows the bass envelope (150 Hz low-pass, 10 ms RMS frames, auto-gain over ~4 s), updated at most 30×/s.
 - **Haptics** fire one short trackpad tap per detected beat (bass energy > 1.6× its ~1 s running average), rate-capped at 4/s by default and 8/s hard.
 - **Audio source** is system audio via ScreenCaptureKit, or the microphone.
+- **RGB devices** (optional): mice, headsets, mousepads and more pulse along through [OpenRGB](#rgb-devices-openrgb).
 - Runs as a **menu bar app** (`Beatlight.app`) or a **command-line tool** (`beatlight`). Both share the same engine.
 
 > Uses two private Apple frameworks (CoreBrightness for the backlight, MultitouchSupport for the trackpad actuator), loaded at runtime. Personal use only; a macOS update can break it. The keyboard backlight is a single zone, so there is no per-key or wave effect.
@@ -78,6 +79,8 @@ Don't want to grant that? Choose **Audio Source → Microphone** in the menu ins
 | Arp Sensitivity | Low / Medium / High (high = more flickers) |
 | Trackpad Haptics | Tap the trackpad on kicks (max 4 taps/s) |
 | Haptic Strength | Weak / Medium / Strong |
+| RGB Devices (OpenRGB) | Pulse your RGB gear too ([setup](#rgb-devices-openrgb)); lists the connected devices |
+| RGB Color | Pulse color, or Color Cycle (new color on each kick) |
 | Launch at Login | Start Beatlight when you log in |
 
 Settings are remembered. If it was running when you quit, it starts again on the next launch. It pauses while the Mac sleeps and resumes on wake. Quitting always restores the backlight.
@@ -132,6 +135,9 @@ Play some music, then:
 | `--arp` | off | Flicker the keyboard backlight on synth/arpeggio notes |
 | `--arp-sens X` | 1.5 | Arp threshold; lower = more flickers |
 | `--arp-depth X` | 0.8 | Backlight flicker strength, 0–1 |
+| `--rgb` | off | Also pulse RGB devices through OpenRGB ([setup](#rgb-devices-openrgb)) |
+| `--rgb-color RRGGBB` | ffffff | Pulse color for RGB devices |
+| `--rgb-cycle` | off | New color on each kick instead of one color |
 | `-v`, `--verbose` | off | Live level meter |
 
 ### Arp mode
@@ -146,10 +152,36 @@ Each detected note flickers the backlight: a flash when the keyboard is dim, a d
 
 Vocals, snares and claps also produce spectral flux, so busy tracks can flicker on more than just the synth. Raise `--arp-sens` (try 2.0) if it's too twitchy, lower it (try 1.3) if it misses notes. If flashing lights bother you, skip `--arp` or lower `--arp-depth`.
 
+## RGB devices (OpenRGB)
+
+beatlight can pulse other RGB gear along with the keyboard, such as a Logitech G502 Lightspeed mouse, G733 headset and POWERPLAY mat. It doesn't talk to those devices itself. [OpenRGB](https://openrgb.org) (free, open source) does, and beatlight sends it the current color up to 25 times a second over OpenRGB's local SDK server.
+
+### Setup
+
+1. **Quit Logitech G HUB completely** (its menu bar icon → Quit) and turn off its launch at login. G HUB and OpenRGB both try to control the lighting and will fight each other.
+2. **Install and open OpenRGB** for macOS from [openrgb.org](https://openrgb.org). Allow any permission it asks for.
+3. **Check your devices in OpenRGB first.** Each one should be listed, and changing its color in OpenRGB should change the real device. If a device isn't listed or doesn't respond, beatlight can't drive it either; that's an OpenRGB issue.
+4. **Start OpenRGB's SDK server:** SDK Server tab → **Start Server**. To have it start automatically, launch OpenRGB with `--server`.
+5. **Turn it on in beatlight:** menu → **RGB Devices (OpenRGB)**, then pick an **RGB Color**. On the command line: `./beatlight -v --rgb --rgb-color ff0000`, or `--rgb-cycle`.
+
+The menu shows "waiting for OpenRGB…" until it connects, then lists the devices it's driving. beatlight checks for OpenRGB every 3 seconds, so the order you open the two apps doesn't matter.
+
+### What it does
+
+- Every device OpenRGB lists is switched to its Direct mode and pulses with the same brightness as the keyboard backlight, including [arp](#arp-mode) flickers. Turn off detection in OpenRGB for anything you want left alone.
+- **Color Cycle** moves to a new hue on every kick.
+- Stopping or quitting beatlight puts each device back to the mode and colors it had in OpenRGB.
+- The RGB output works even with the keyboard backlight turned off.
+
+### Caveats
+
+- **Wireless lag and battery:** color updates share the wireless link with everything else, so wireless devices may lag the keyboard slightly or skip updates. RGB also drains wireless batteries faster.
+- **OpenRGB on macOS is less mature** than on Windows and Linux, and some Logitech devices have detection problems there. Step 3 tells you quickly whether your setup works.
+
 ## Hardware safety
 
 The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an electromagnetic coil built for short clicks; beatlight only sends discrete, rate-capped taps and never drives it with a continuous waveform.
 
 ## Status
 
-The command-line tool builds on macOS with the Command Line Tools. The menu bar app is new and not yet verified on hardware; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
+The command-line tool builds on macOS with the Command Line Tools. The menu bar app is new and not yet verified on hardware. The OpenRGB client (`orgb.c`) is tested against a simulated OpenRGB server but not yet with real devices; the `MTActuatorActuate` arguments and actuation IDs are reverse-engineered and may need adjusting per Mac.
