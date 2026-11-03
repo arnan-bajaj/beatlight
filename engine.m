@@ -34,6 +34,9 @@ static const double kRawGate = 1e-3;                  // full-band RMS below thi
 static const double kFluxFloor = 0.5;                 // ignore spectral-flux peaks smaller than this
 static const uint64_t kMinFlickGapNs = 83000000ull;   // backlight flickers: at most ~12/s
 static const uint64_t kKickMaskNs = 40000000ull;      // ignore arp onsets within 40 ms of a kick
+#define kTapWindow ((int)BL_HAPTIC_RATE_CAP)          // all trackpad taps: at most this many per second...
+static const uint64_t kMinTapGapNs = 60000000ull;     // ...and never two within 60 ms
+static const int kArpTapPattern = 3;                  // arp taps always use the weakest pattern
 
 static NSString *const kScreenPermissionMsg =
     @"no permission to capture system audio. Turn it on in System Settings > Privacy & Security > "
@@ -83,7 +86,7 @@ static void optsSet(BLOptions o) {
 BLOptions BLDefaultOptions(void) {
     return (BLOptions){ .useMic = NO, .backlight = YES, .haptics = YES, .arp = NO,
                         .minB = 0.05f, .maxB = 1.0f, .sens = 1.6, .hapticRate = 4.0, .hapticID = 4,
-                        .arpSens = 1.5, .arpDepth = 0.8f,
+                        .arpSens = 1.5, .arpDepth = 0.8f, .arpHaptics = NO,
                         .rgb = NO, .rgbColor = 0xFFFFFF, .rgbMode = BLRGBSolid };
 }
 
@@ -218,6 +221,24 @@ static void hapticClose(void) {
 
 static void hapticPulse(int actuationID) {
     if (gAct) pActuate(gAct, actuationID, 0, 0.0f, 2.0f);
+}
+
+// One limiter for every trackpad tap, kicks and arps together (audio thread only).
+static uint64_t gTapTimes[kTapWindow];   // the last kTapWindow tap times, 0 = empty
+static int gTapNext;                     // slot to overwrite next = oldest recorded tap
+
+static BOOL tapAllowed(uint64_t t) {
+    uint64_t newest = gTapTimes[(gTapNext + kTapWindow - 1) % kTapWindow];
+    uint64_t oldest = gTapTimes[gTapNext];
+    if (newest && t - newest < kMinTapGapNs) return NO;
+    if (oldest && t - oldest < 1000000000ull) return NO;   // would be tap #(kTapWindow+1) within 1 s
+    return YES;
+}
+
+static void fireTap(uint64_t t, int pattern) {
+    gTapTimes[gTapNext] = t;
+    gTapNext = (gTapNext + 1) % kTapWindow;
+    dispatch_async(gHWQ, ^{ hapticPulse(pattern); });
 }
 
 #pragma mark - Analysis — audio threads only
@@ -358,7 +379,7 @@ static void onFrame(double e, double raw) {
     // Arp note = a local peak in spectral flux well above its recent average.
     // Peak-picking looks one frame back, so it lags by 10 ms.
     BOOL arpOnset = NO;
-    if (o.arp && (kbOn || rgbOn) && gDFT) {
+    if (((o.arp && (kbOn || rgbOn)) || (o.arpHaptics && hapOn)) && gDFT) {
         double f = spectralFlux();
         if (A.frames > 50 &&                                  // let averages settle (~0.5 s)
             A.flux1 > A.flux2 && A.flux1 >= f &&
@@ -377,21 +398,26 @@ static void onFrame(double e, double raw) {
     double level = fmin(A.env / A.peak, 1.0);
     level *= level;                              // more contrast between hits and gaps
 
-    // Haptics: kicks only, rate-limited.
-    if (onset && hapOn) {
-        uint64_t minGapNs = (uint64_t)(1e9 / fmin(o.hapticRate, BL_HAPTIC_RATE_CAP));
-        if (t - A.lastPulse >= minGapNs) {
-            A.lastPulse = t;
-            int pattern = o.hapticID;
-            dispatch_async(gHWQ, ^{ hapticPulse(pattern); });
+    // Haptics: a tap per kick, plus (experimental) a weak tap per arp note. Every tap goes
+    // through one limiter, so kicks and arps together never exceed kTapWindow taps a second.
+    if (hapOn) {
+        if (onset) {
+            uint64_t minGapNs = (uint64_t)(1e9 / fmin(o.hapticRate, BL_HAPTIC_RATE_CAP));
+            if (t - A.lastPulse >= minGapNs && tapAllowed(t)) {
+                A.lastPulse = t;
+                fireTap(t, o.hapticID);
+            }
         }
+        // A kick's attack also lights up the mids, so arps within 40 ms of a kick are ignored.
+        if (arpOnset && o.arpHaptics && t - A.lastOnset > kKickMaskNs && tapAllowed(t))
+            fireTap(t, kArpTapPattern);
     }
 
     // Backlight flicker: each arp note briefly swings the brightness toward the opposite
     // extreme (a flash when the keyboard is dim, a dip when it's bright), then it fades back.
     // A kick's attack also lights up the mids, so arps within 40 ms of a kick are ignored.
     BOOL flickNow = NO;
-    if (arpOnset && t - A.lastOnset > kKickMaskNs && t - A.lastFlick >= kMinFlickGapNs) {
+    if (arpOnset && o.arp && t - A.lastOnset > kKickMaskNs && t - A.lastFlick >= kMinFlickGapNs) {
         A.flick = 1.0;
         A.lastFlick = t;
         flickNow = YES;

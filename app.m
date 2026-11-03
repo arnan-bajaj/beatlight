@@ -15,6 +15,7 @@ static NSString *const kArp         = @"arp";
 static NSString *const kHapticID    = @"hapticID";      // 3, 4, 6
 static NSString *const kBeatSens    = @"beatSens";
 static NSString *const kArpSens     = @"arpSens";
+static NSString *const kArpHaptics  = @"arpHaptics";    // experimental
 static NSString *const kWasRunning  = @"wasRunning";
 static NSString *const kRGB         = @"rgb";
 static NSString *const kRGBColor    = @"rgbColor";      // 0xRRGGBB
@@ -45,7 +46,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     [NSUserDefaults.standardUserDefaults registerDefaults:@{
         kSource: @"system", kBacklight: @YES, kHaptics: @YES, kArp: @NO,
-        kHapticID: @4, kBeatSens: @1.6, kArpSens: @1.5, kWasRunning: @YES,
+        kHapticID: @4, kBeatSens: @1.6, kArpSens: @1.5, kWasRunning: @YES, kArpHaptics: @NO,
         kRGB: @NO, kRGBColor: @0xFFFFFF, kRGBMode: @(BLRGBSolid),
     }];
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -85,6 +86,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     o.hapticID  = (int)[d integerForKey:kHapticID];
     o.sens      = [d doubleForKey:kBeatSens];
     o.arpSens   = [d doubleForKey:kArpSens];
+    o.arpHaptics = [d boolForKey:kArpHaptics];
     o.rgb       = [d boolForKey:kRGB];
     o.rgbColor  = (uint32_t)[d integerForKey:kRGBColor];
     o.rgbMode   = (BLRGBMode)[d integerForKey:kRGBMode];
@@ -378,6 +380,7 @@ typedef NS_ENUM(NSInteger, BLState) { BLStateStopped, BLStateStarting, BLStateRu
     [self addChoice:@"Weak" action:@selector(setHapticID:) value:@3 checked:hid == 3 to:strength.submenu];
     [self addChoice:@"Medium" action:@selector(setHapticID:) value:@4 checked:hid == 4 to:strength.submenu];
     [self addChoice:@"Strong" action:@selector(setHapticID:) value:@6 checked:hid == 6 to:strength.submenu];
+    [self addToggle:@"Arp Taps (experimental)" key:kArpHaptics to:menu].enabled = hapticsOn;
     [menu addItem:NSMenuItem.separatorItem];
 
     [self addRGBItemsTo:menu running:running enabled:rgbOn];

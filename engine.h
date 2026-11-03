@@ -29,6 +29,7 @@ typedef struct {
     int hapticID;       // actuation pattern: 3 weak, 4 medium, 6 strong
     double arpSens;     // arp threshold: multiple of the running spectral-flux average, > 1
     float arpDepth;     // backlight flicker strength, 0..1
+    BOOL arpHaptics;    // EXPERIMENTAL: also tap the trackpad (weakest pattern) on arp notes
     BOOL rgb;           // also pulse RGB devices through OpenRGB's SDK server (orgb.c)
     uint32_t rgbColor;  // 0xRRGGBB pulse color (BLRGBSolid)
     BLRGBMode rgbMode;  // solid color, or one of the hue cycles

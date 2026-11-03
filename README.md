@@ -81,6 +81,7 @@ Don't want to grant that? Choose **Audio Source → Microphone** in the menu ins
 | Arp Sensitivity | Low / Medium / High (high = more flickers) |
 | Trackpad Haptics | Tap the trackpad on kicks (max 4 taps/s) |
 | Haptic Strength | Weak / Medium / Strong |
+| Arp Taps (experimental) | Also tap the trackpad, weakly, on arp notes ([details](#arp-taps-experimental)) |
 | RGB Devices (OpenRGB) | Pulse your RGB gear too ([setup](#rgb-devices-openrgb)); lists the connected devices |
 | RGB Color | A solid color, Color Cycle (new color each kick), or a smooth rainbow (steady, or faster when louder) |
 | Launch at Login | Start Beatlight when you log in |
@@ -163,6 +164,7 @@ Play some music, then:
 | `--arp` | off | Flicker the keyboard backlight on synth/arpeggio notes |
 | `--arp-sens X` | 1.5 | Arp threshold; lower = more flickers |
 | `--arp-depth X` | 0.8 | Backlight flicker strength, 0–1 |
+| `--arp-haptics` | off | Experimental: also tap the trackpad on arp notes ([details](#arp-taps-experimental)) |
 | `--rgb` | off | Also pulse RGB devices through OpenRGB ([setup](#rgb-devices-openrgb)) |
 | `--rgb-color RRGGBB` | ffffff | Pulse color for RGB devices |
 | `--rgb-mode MODE` | solid | `solid` (uses `--rgb-color`), `kick` (new color each kick), `rainbow` (smooth flow), `reactive` (flows faster when louder) |
@@ -180,6 +182,10 @@ Each detected note flickers the backlight: a flash when the keyboard is dim, a d
 ```
 
 Vocals, snares and claps also produce spectral flux, so busy tracks can flicker on more than just the synth. Raise `--arp-sens` (try 2.0) if it's too twitchy, lower it (try 1.3) if it misses notes. If flashing lights bother you, skip `--arp` or lower `--arp-depth`.
+
+### Arp taps (experimental)
+
+**Arp Taps** (`--arp-haptics`) also taps the trackpad on each arp note, using the weakest tap pattern. It works with Arp Flicker on or off. Kick taps and arp taps share one limit: at most 8 taps in any second and never two within 60 ms. On a fast arpeggio that means close to 8 taps a second for as long as the part lasts, so expect more wear on the trackpad's motor than with kicks alone. Use it for fun, not all day.
 
 ## RGB devices (OpenRGB)
 
@@ -235,7 +241,7 @@ grep -iE "receiver|slot=" "$(ls -td ~/.config/OpenRGB/logs/* | head -1)"
 
 ## Hardware safety
 
-The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an electromagnetic coil built for short clicks; beatlight only sends discrete, rate-capped taps and never drives it with a continuous waveform.
+The backlight is LEDs, so fast changes are harmless. The trackpad actuator is an electromagnetic coil built for short clicks; beatlight only sends discrete, rate-capped taps (8 per second at most, including experimental arp taps) and never drives it with a continuous waveform.
 
 ## Status
 

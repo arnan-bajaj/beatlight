@@ -28,6 +28,8 @@ static void usage(void) {
         "  --arp              flicker the keyboard backlight on synth/arpeggio notes (250 Hz-4 kHz)\n"
         "  --arp-sens X       arp threshold vs. running average, >1 (default 1.5; lower = more flickers)\n"
         "  --arp-depth X      backlight flicker strength, 0-1 (default 0.8)\n"
+        "  --arp-haptics      EXPERIMENTAL: also tap the trackpad (weakly) on arp notes;\n"
+        "                     all taps together stay capped at 8 per second\n"
         "  --rgb              also pulse RGB devices through OpenRGB (its SDK server must be running)\n"
         "  --rgb-color RRGGBB pulse color for RGB devices, hex (default ffffff)\n"
         "  --rgb-mode MODE    solid (default, uses --rgb-color), kick (new color each kick),\n"
@@ -81,6 +83,7 @@ static BLOptions parseArgs(int argc, const char *argv[]) {
         else if (!strcmp(a, "--arp"))           o.arp = YES;
         else if (!strcmp(a, "--arp-sens"))      o.arpSens = argNum(argc, argv, &i);
         else if (!strcmp(a, "--arp-depth"))     o.arpDepth = (float)argNum(argc, argv, &i);
+        else if (!strcmp(a, "--arp-haptics"))   o.arpHaptics = YES;
         else if (!strcmp(a, "--rgb"))           o.rgb = YES;
         else if (!strcmp(a, "--rgb-color"))     o.rgbColor = argHex(argc, argv, &i);
         else if (!strcmp(a, "--rgb-cycle"))     o.rgbMode = BLRGBKickCycle;
